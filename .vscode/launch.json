@@ -6,7 +6,11 @@
       "type": "debugpy",
       "request": "launch",
       "module": "limivia.commands.app",
-      "args": ["scan", "--kind", "ble"],
+      "args": [
+        "scan",
+        "--kind",
+        "ble"
+      ],
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
     },
@@ -15,7 +19,52 @@
       "type": "debugpy",
       "request": "launch",
       "module": "examples.async_adc",
-      "args": ["--samples", "10"],
+      "args": [
+        "--samples",
+        "10"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "LIMIVIA SDK 同步状态示例",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "examples.sync_state",
+      "args": [],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "LIMIVIA SDK 异步状态示例",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "examples.async_state",
+      "args": [],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "LIMIVIA SDK PWM 示例",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "examples.sync_pwm",
+      "args": [
+        "--duration",
+        "5"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "LIMIVIA SDK 事件分发示例",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "examples.async_events",
+      "args": [
+        "--duration",
+        "10"
+      ],
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
     }
