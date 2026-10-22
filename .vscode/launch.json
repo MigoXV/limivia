@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "LIMIVIA SDK 扫描",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "limivia.commands.app",
+      "args": ["scan", "--kind", "ble"],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "LIMIVIA SDK ADC 示例",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "examples.async_adc",
+      "args": ["--samples", "10"],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    }
+  ]
+}

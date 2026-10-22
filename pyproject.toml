@@ -1,0 +1,45 @@
+[project]
+name = "limivia"
+version = "0.1.0"
+description = "LIMIVIA：事件式 USB/BLE Python SDK"
+authors = [{name = "migo", email = "1695587905@qq.com"}]
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = ["pydantic>=2,<3", "bleak>=1,<4", "pyserial>=3.5,<4", "anyio>=4,<5", "typer>=0.15,<1"]
+
+[project.scripts]
+limivia = "limivia.commands.app:app"
+
+[tool.poetry]
+packages = [{include = "limivia", from = "src"}]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8,<9"
+ruff = ">=0.11,<1"
+mypy = ">=1,<2"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["SIM117"]
+
+[tool.mypy]
+files = ["src/limivia", "tests/typecheck.py"]
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["serial", "serial.*"]
+ignore_missing_imports = true
+
+[[tool.poetry.source]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+priority = "primary"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
