@@ -17,68 +17,24 @@ poetry run limivia scan --kind ble
 
 项目通过 `poetry.toml` 使用独立的 `.venv`。USB 扫描使用 `--kind usb`，CLI 默认值也可通过 `LIMIVIA_TRANSPORT` 设置。SDK 客户端的连接类型由方法参数显式决定。
 
-其他 Poetry 项目可运行 `poetry add --editable /path/to/limivia`。发布文件通过 `poetry build` 构建；本仓库尚未发布到 PyPI。
+可从 PyPI 安装：`pip install limivia`，或在其他 Poetry 项目中运行 `poetry add limivia`。需要本地联调时可运行 `poetry add --editable /path/to/limivia`。发布文件通过 `poetry build` 构建。
 
 蓝牙依赖 Bleak，Linux 需要 BlueZ 和可访问的系统 D-Bus。USB 依赖 pySerial，需要串口权限。设备必须已安装 LIMIVIA 专用固件；安装 SDK 不会烧录设备。
 
-## 同步调用
+## 同步与异步调用
 
-```python
-from limivia import Limivia
+同步 `Limivia` 与异步 `AsyncLimivia` 使用相同的资源名称、参数和事件类型。完整、可运行的入门对照见 [同步状态查询](examples/sync_state.py) 与 [异步状态查询](examples/async_state.py)：
 
-with Limivia() as client:
-    devices = client.devices.list(kind="ble")
-    if not devices:
-        raise RuntimeError("未发现设备")
-
-    with client.devices.connect(kind="ble", target=devices[0].id) as connection:
-        request_id = connection.gpio.set(pin=13, mode="output", level=1)
-
-        for event in connection:
-            if event.type == "gpio.set.completed" and event.request_id == request_id:
-                print(event.result.pins)
-                break
-            if event.type == "command.failed" and event.request_id == request_id:
-                raise RuntimeError(event.error.message)
-            if event.type == "connection.closed":
-                raise RuntimeError("设备已断开")
+```bash
+poetry run python -m examples.sync_state --kind ble
+poetry run python -m examples.async_state --kind usb
 ```
 
-命令方法返回的整数仅表示已通过校验并进入发送队列。设备是否执行成功，以匹配请求 ID 的结果事件为准。连接自动发送并校验 `hello`，事件流首先包含这次握手结果。
+两个示例都会先扫描并选择设备；存在多台时，需要通过 `--target` 指定本次扫描得到的 ID。连接自动发送并校验 `hello`，结果仍由事件流交付。
 
-## 异步事件流
+命令方法返回的整数仅表示已通过校验并进入发送队列。是否执行成功，以匹配请求 ID 的结果事件为准。同步版本使用 `for event in connection` 或 `connection.recv()`；异步版本通过 `await` 提交命令，通过 `async for` 或 `await connection.recv()` 接收事件。
 
-```python
-import asyncio
-
-from limivia import AsyncLimivia
-
-
-async def main():
-    async with AsyncLimivia() as client:
-        devices = await client.devices.list(kind="ble")
-        if not devices:
-            raise RuntimeError("未发现设备")
-
-        async with client.devices.connect(kind="ble", target=devices[0].id) as connection:
-            start_id = await connection.adc.start(pin=0, interval_ms=200)
-            async for event in connection:
-                if event.type == "adc.start.completed" and event.request_id == start_id:
-                    print("首次采样", event.result.millivolts)
-                elif event.type == "adc.sample":
-                    print(event.data.millivolts)
-                elif event.type == "command.failed":
-                    print(event.request_id, event.error.code, event.error.message)
-                elif event.type == "connection.closed":
-                    break
-
-
-asyncio.run(main())
-```
-
-两种客户端的资源名称、参数和事件类型相同；异步版本通过 `await` 提交命令，通过 `async for` 或 `await connection.recv()` 接收事件。同步版本的后台事件循环持续运行，调用者处理数据时也能接收 BLE 通知。
-
-每个连接仅允许一个事件消费者，不能同时从两个任务调用 `recv()` 或迭代连接。应用需要多个订阅者时，应在自己的一个消费循环内分发。命令处理与事件消费独立运行，不要求先迭代才能发送命令。
+每个连接仅允许一个事件消费者，不能同时从两个任务调用 `recv()` 或迭代连接。多个订阅者的分发方式见 [异步事件示例](examples/async_events.py)。命令处理与事件消费独立运行，不要求先迭代才能发送命令；同步客户端的后台事件循环在整个生命周期内持续运行。
 
 ## 资源与返回事件
 
@@ -134,14 +90,16 @@ SDK 的事件名称由宿主端映射，设备上仍使用原有的 `v/id/op/par
 
 ## 示例与验证
 
-可执行示例（会实际操纵已连接的开发板）：
+完整学习顺序、参数、接线及退出行为见 [示例指南](examples/README.md)。从只读查询开始，再运行资源示例（会实际操纵开发板）：
 
 ```bash
+poetry run python -m examples.discover --kind usb
+poetry run python -m examples.sync_state --kind usb
 poetry run python -m examples.sync_gpio --kind ble
 poetry run python -m examples.async_adc --kind usb --samples 10
 ```
 
-ADC 示例收满指定数量后提交停止命令并等待确认。提前中断程序可能留下板上采集任务，可重连后显式停止。
+资源示例正常结束或首次 Ctrl+C 时等待停止／释放确认；持续采样精确收集指定数量并检测无数据超时。设备断线或强制结束程序时可能留下板上任务，可重连后通过 `examples.sync_cleanup --pin <GPIO>` 显式释放。
 
 开发验证：
 
@@ -153,7 +111,7 @@ poetry check --lock
 poetry build
 ```
 
-测试采用模拟传输，覆盖全部资源、同步／异步一致性、事件类型、分片与错误、队列和生命周期。模拟验证不能替代真实 USB/BLE 实机验收。本次拆分未执行实机控制。
+自动化测试采用模拟传输，覆盖全部资源、同步／异步一致性、事件类型、分片与错误、队列和生命周期。示例另已在 BLE 实机验证，并修复有限定时器自然结束后的释放问题；连接阶段的间歇断开及一次非终端 SIGINT 检查超时也已记录。USB 尚未实测。完整命令、结果与验证边界见 [验证记录](docs/verification.md)。
 
 ## 开源协议
 

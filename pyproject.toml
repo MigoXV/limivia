@@ -28,7 +28,7 @@ line-length = 100
 "tests/*.py" = ["SIM117"]
 
 [tool.mypy]
-files = ["src/limivia", "tests/typecheck.py"]
+files = ["src/limivia", "tests/typecheck.py", "examples"]
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
