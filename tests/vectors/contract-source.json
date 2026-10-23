@@ -1,0 +1,20 @@
+{
+  "contract": "limivia-v3-jsonrpc2",
+  "firmware_checkout": "f110c38ca370fe017fdf4c08e94632d2cbf52f84",
+  "image_source_commit": "e0340006bd2c7bd6fb8345295299ce3085c45fe0",
+  "files": {
+    "docs/protocol.md": "ec707663eda5d54729dec5a21cf514b45860953dec1426cf58dbfd072eb7f735",
+    "docs/peripheral-matrix.md": "8918d63e3c807fd394299d555b1642023626f8f16be211d58241a5c7835732b3",
+    "docs/verification.md": "010aff7c1313f829883ec359d88ed1b4681c48b71ff3ecf8f6c2c1f1594d1f89",
+    "main/rpc.c": "613feee81b88d79b2ef4aa54c1a235d89fde14734bf329c64e129198a402c1ce",
+    "main/operations.c": "6d13964d85d336aedf4f121f85ccc65934478cc54f41c88ad41071eaf2c4618c",
+    "main/resources.c": "841019c88c1a0f6f0f0b54cf59a3cf18a0bf7720772dd15ba34304611e5caa55",
+    "tests/vectors/jsonrpc.json": "0281bf2a8bf468c5368603bef67e57b1f14212f5c639fc1c993af8ec891c2f7f",
+    "tests/vectors/jsonrpc-captured.json": "2fed5f4323ee305ac7fc35249a9ca73906d1add941b4e0643d627738dbf1d9ee"
+  },
+  "additional_implementation_files": {
+    "main/engine.c": "5b2b03c9b6c6192737805dacc44b694ca9e0cee53f2e9d36e0806231162b1d84",
+    "main/peripherals.c": "672ee0d5d0b93600b29a682ef05cf96edcd0712031021fea7aefeaa76c0c474b",
+    "main/runtime.c": "9e1fdb41f048d830c3930e58b0e98b8cdfe272b288713001cc0d4e03ea2bd411"
+  }
+}

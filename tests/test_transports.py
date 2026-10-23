@@ -5,7 +5,7 @@ import pytest
 
 from limivia.transports import RX, SERVICE, TX, BluetoothTransport, DeviceBackend
 
-COMMAND = '{"v":1,"id":1,"op":"hello","params":{}}\n'
+COMMAND = '{"v":3,"id":1,"op":"hello","params":{}}\n'
 
 
 def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(monkeypatch):
@@ -13,6 +13,7 @@ def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(monkeypatch)
         def __init__(self, device, disconnected_callback, **kwargs):
             self.disconnected = disconnected_callback
             self.writes = []
+            self.dtr = self.rts = True
             self.notifications = None
             self.connected = False
 
@@ -91,10 +92,12 @@ def test_serial_transport_preserves_bytes_and_does_not_toggle_reset(monkeypatch)
         def __init__(self, **kwargs):
             assert kwargs == {"baudrate": 115200, "timeout": 0.2, "write_timeout": 2}
             self.is_open = False
+            self.in_waiting = 0
             self.writes = []
+            self.dtr = self.rts = True
 
         def open(self):
-            assert self.dtr is False and self.rts is False
+            assert self.dtr is True and self.rts is True
             assert self.port == "/dev/test"
             self.is_open = True
 

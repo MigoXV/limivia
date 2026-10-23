@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from contextlib import AbstractContextManager
 from functools import partial
 from typing import Protocol, Self
@@ -9,22 +10,25 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 
 from ._connection import AsyncConnection
 from ._exceptions import DeviceConnectionError
-from .resources import (
-    ADCResource,
-    GPIOResource,
-    OutputsResource,
-    PinResource,
-    PWMResource,
-    StateResource,
-    TimerResource,
-)
+from .resources import Resources
 from .transports import DeviceBackend, Transport
-from .types import ClientEvent, ClientEventParam, DeviceEvent, DeviceInfo, LinkKind
+from .types import (
+    ClientEvent,
+    ClientEventParam,
+    ConnectionOptions,
+    DeviceEvent,
+    DeviceIdentity,
+    DeviceInfo,
+    LinkKind,
+    MQTTOptions,
+)
 
 
 class Backend(Protocol):
     async def discover(self, kind: LinkKind) -> list[dict[str, str]]: ...
-    def transport(self, kind: LinkKind, target: str) -> Transport: ...
+    def transport(
+        self, kind: LinkKind, target: str, options: ConnectionOptions | None = None
+    ) -> Transport: ...
 
 
 class AsyncDevices:
@@ -45,15 +49,31 @@ class AsyncDevices:
         finally:
             client._scanning = None
 
-    def connect(self, *, kind: LinkKind = "ble", target: str) -> AsyncConnectionManager:
-        return AsyncConnectionManager(self._client, kind, target)
+    def connect(
+        self,
+        *,
+        kind: LinkKind = "ble",
+        target: str,
+        options: ConnectionOptions | None = None,
+        expected_device_id: str | None = None,
+    ) -> AsyncConnectionManager:
+        return AsyncConnectionManager(self._client, kind, target, options, expected_device_id)
 
 
 class AsyncConnectionManager:
-    def __init__(self, client: AsyncLimivia, kind: LinkKind, target: str):
+    def __init__(
+        self,
+        client: AsyncLimivia,
+        kind: LinkKind,
+        target: str,
+        options: ConnectionOptions | None,
+        expected_device_id: str | None,
+    ):
         self._client = client
         self._kind = kind
         self._target = target
+        self._options = options
+        self._expected = expected_device_id
         self._connection: AsyncConnection | None = None
         self._entered = False
 
@@ -63,15 +83,24 @@ class AsyncConnectionManager:
         if self._entered:
             raise DeviceConnectionError("连接上下文不能重复使用。")
         self._entered = True
-        if self._kind not in ("ble", "usb"):
-            raise ValueError("kind 必须为 ble 或 usb。")
+        if self._kind not in ("ble", "usb", "ws", "mqtt"):
+            raise ValueError("kind 必须为 ble/usb/ws/mqtt")
+        if self._kind == "mqtt":
+            if not isinstance(self._options, MQTTOptions):
+                raise ValueError("MQTT连接需要MQTTOptions/device_id")
+            if self._expected and self._expected.lower() != self._options.device_id:
+                raise ValueError("MQTT目标与expected_device_id不一致")
+            self._expected = self._options.device_id
         if client._active is not None or client._scanning:
             raise DeviceConnectionError("已有活动连接或正在扫描，请先结束当前会话。")
         connection = AsyncConnection(
-            client._backend.transport(self._kind, self._target),
+            client._backend.transport(self._kind, self._target, self._options),
             timeout=client.timeout,
             connect_timeout=client.connect_timeout,
             event_queue_size=client.event_queue_size,
+            job_timeout=client.job_timeout,
+            job_poll_interval=client.job_poll_interval,
+            expected_device_id=self._expected,
         )
         self._connection = connection
         client._active = connection
@@ -101,13 +130,25 @@ class AsyncLimivia:
         timeout: float = 6,
         connect_timeout: float = 20,
         event_queue_size: int = 256,
+        job_timeout: float = 30,
+        job_poll_interval: float = 0.1,
         backend: Backend | None = None,
     ):
-        if timeout <= 0 or connect_timeout <= 0 or event_queue_size < 1:
-            raise ValueError("超时和事件缓冲大小必须大于零。")
+        if (
+            any(
+                not math.isfinite(v) or v <= 0
+                for v in (timeout, connect_timeout, job_timeout, job_poll_interval)
+            )
+            or type(event_queue_size) is not int
+            or event_queue_size < 1
+            or job_poll_interval < 0.01
+        ):
+            raise ValueError("超时必须有限且大于零，事件缓冲需要正整数，轮询间隔至少10ms")
         self.timeout = timeout
         self.connect_timeout = connect_timeout
         self.event_queue_size = event_queue_size
+        self.job_timeout = job_timeout
+        self.job_poll_interval = job_poll_interval
         self._backend = backend if backend is not None else DeviceBackend()
         self._active: AsyncConnection | None = None
         self._scanning: asyncio.Task | None = None
@@ -147,24 +188,30 @@ class AsyncLimivia:
             self._active = None
 
 
-class Connection:
+class Connection(Resources[int]):
     def __init__(self, connection: AsyncConnection, portal: BlockingPortal):
         self._connection = connection
         self._portal = portal
         self.handshake_request_id = connection.handshake_request_id
-        self.state = StateResource(self.send)
-        self.gpio = GPIOResource(self.send)
-        self.pwm = PWMResource(self.send)
-        self.adc = ADCResource(self.send)
-        self.timer = TimerResource(self.send)
-        self.pin = PinResource(self.send)
-        self.outputs = OutputsResource(self.send)
+        super().__init__(
+            self.send, snapshot=lambda: self._portal.call(self._connection._state_snapshot)
+        )
 
     def send(self, event: ClientEvent | ClientEventParam) -> int:
         return self._portal.call(self._connection.send, event)
 
-    def hello(self) -> int:
-        return self._portal.call(self._connection.hello)
+    def hello(self, *, client_nonce: str | None = None) -> int:
+        return self._portal.call(lambda: self._connection.hello(client_nonce=client_nonce))
+
+    @property
+    def identity(self) -> DeviceIdentity | None:
+        return self._portal.call(lambda: self._connection.identity)
+
+    def discover(self, *, refresh: bool = False) -> int:
+        return self._portal.call(lambda: self._connection.discover(refresh=refresh))
+
+    def batch(self, commands: list[ClientEvent | ClientEventParam]) -> list[int]:
+        return self._portal.call(self._connection.batch, commands)
 
     def recv(self) -> DeviceEvent:
         try:
@@ -183,10 +230,19 @@ class Connection:
 
 
 class ConnectionManager:
-    def __init__(self, client: Limivia, kind: LinkKind, target: str):
+    def __init__(
+        self,
+        client: Limivia,
+        kind: LinkKind,
+        target: str,
+        options: ConnectionOptions | None,
+        expected_device_id: str | None,
+    ):
         self._client = client
         self._kind = kind
         self._target = target
+        self._options = options
+        self._expected = expected_device_id
         self._manager: AsyncConnectionManager | None = None
         self._entered = False
 
@@ -195,7 +251,12 @@ class ConnectionManager:
             raise DeviceConnectionError("连接上下文不能重复使用。")
         self._entered = True
         portal, client = self._client._ensure()
-        self._manager = client.devices.connect(kind=self._kind, target=self._target)
+        self._manager = client.devices.connect(
+            kind=self._kind,
+            target=self._target,
+            options=self._options,
+            expected_device_id=self._expected,
+        )
         return Connection(portal.call(self._manager.__aenter__), portal)
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -211,8 +272,15 @@ class Devices:
         portal, client = self._client._ensure()
         return portal.call(partial(client.devices.list, kind=kind))
 
-    def connect(self, *, kind: LinkKind = "ble", target: str) -> ConnectionManager:
-        return ConnectionManager(self._client, kind, target)
+    def connect(
+        self,
+        *,
+        kind: LinkKind = "ble",
+        target: str,
+        options: ConnectionOptions | None = None,
+        expected_device_id: str | None = None,
+    ) -> ConnectionManager:
+        return ConnectionManager(self._client, kind, target, options, expected_device_id)
 
 
 class Limivia:
@@ -224,6 +292,8 @@ class Limivia:
         timeout: float = 6,
         connect_timeout: float = 20,
         event_queue_size: int = 256,
+        job_timeout: float = 30,
+        job_poll_interval: float = 0.1,
         backend: Backend | None = None,
     ):
         self._factory = partial(
@@ -231,6 +301,8 @@ class Limivia:
             timeout=timeout,
             connect_timeout=connect_timeout,
             event_queue_size=event_queue_size,
+            job_timeout=job_timeout,
+            job_poll_interval=job_poll_interval,
             backend=backend,
         )
         self._portal_context: AbstractContextManager[BlockingPortal] | None = None

@@ -1,60 +1,17 @@
-"""异步入门：与 sync_state 相同的流程，使用 await 和 async for。"""
-
 import asyncio
-import logging
 
-import typer
-
-from limivia import AsyncLimivia
-from limivia.types import LinkKind
-
-from ._common import Kind, KindOption, TargetOption, command_line, select_device
-
-logger = logging.getLogger(__name__)
+from ._common import Kind, KindOption, TargetOption, await_result, connect_async, execute
 
 
-async def run(client: AsyncLimivia, *, kind: LinkKind = "ble", target: str | None = None) -> None:
-    devices = await client.devices.list(kind=kind)
-    target = select_device(devices, target)
-    async with client.devices.connect(kind=kind, target=target) as connection:
-        hello_id = connection.handshake_request_id
-        refreshed = False
-        state_id: int | None = None
-        async for event in connection:
-            if event.type == "hello.completed" and event.request_id == hello_id:
-                logger.info(
-                    "%s：%s，固件=%s，协议=%s，能力=%s",
-                    "显式 hello" if refreshed else "自动握手",
-                    event.result.name,
-                    event.result.firmware,
-                    event.result.protocol,
-                    event.result.capabilities.to_json(),
-                )
-                if not refreshed:
-                    hello_id = await connection.hello()
-                    refreshed = True
-                else:
-                    state_id = await connection.state.retrieve()
-            elif event.type == "state.completed" and event.request_id == state_id:
-                logger.info("完整状态：%s", event.result.to_json())
-                return
-            elif event.type == "command.failed":
-                raise RuntimeError(f"{event.op} #{event.request_id}: {event.error.to_json()}")
-            elif event.type == "connection.closed":
-                raise RuntimeError(f"查询完成前连接已关闭：{event.error}")
-        raise RuntimeError("事件流提前结束。")
+async def run(kind: Kind, target: str | None):
+    async with connect_async(kind, target) as connection:
+        snapshot = await await_result(connection, await connection.state.snapshot())
+        print(snapshot.to_json())
 
 
-async def main_async(kind: Kind, target: str | None) -> None:
-    async with AsyncLimivia() as client:
-        await run(client, kind=kind.link, target=target)
-
-
-def main(kind: KindOption = Kind.ble, target: TargetOption = None) -> None:
-    """异步读取设备信息和状态，不改变引脚。"""
-    with command_line():
-        asyncio.run(main_async(kind, target))
+def main(kind: KindOption = Kind.usb, target: TargetOption = None):
+    asyncio.run(run(kind, target))
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    execute(main)()

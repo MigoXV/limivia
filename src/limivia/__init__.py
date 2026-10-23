@@ -19,4 +19,4 @@ from ._exceptions import (
     QueueFullError as QueueFullError,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.3.0a1"

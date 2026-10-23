@@ -1,33 +1,42 @@
+"""测试侧v3设备：控制响应/断线/作业，不能作为真实硬件证据。"""
+
 import asyncio
+import copy
 import json
 
+HELLO = {
+    "protocol": 3,
+    "jsonrpc": "2.0",
+    "contract": "limivia-v3-jsonrpc2",
+    "batch_max": 8,
+    "sequence_window": 64,
+    "sequence_high": 0,
+    "board": "luatos-esp32c3-usb",
+    "device_id": "e4:b0:63:ca:b4:78",
+    "firmware": "0.3.0-dev",
+    "boot_id": "0123456789abcdef",
+    "build_id": "a" * 64,
+    "session": "session-test",
+    "profile": "bus",
+    "request_max": 1024,
+    "response_max": 8192,
+    "session_timeout_ms": 5000,
+    "capability_pages": 28,
+    "auth_mode": "open",
+    "resources_max": 24,
+    "job_history": 16,
+    "buffer_max": 4096,
+}
 STATE = {
     "revision": 1,
+    "epoch": 1,
+    "page": 0,
+    "pages": 6,
     "uptime_ms": 10,
-    "ble_connected": True,
-    "usb_active": False,
-    "pins": [{"pin": 13, "mode": "idle", "pull": "none", "level": None}],
-    "pwm": [],
-    "timers": [],
-    "streams": [],
-}
-SAMPLE = {"pin": 0, "raw": 1234, "calibrated": True, "millivolts": 900, "uptime_ms": 10}
-HELLO = {
-    "name": "设备",
-    "board": "luatos-esp32c3-usb",
-    "firmware": "0.1.0",
-    "device_id": "test",
-    "protocol": 1,
-    "state": STATE,
-    "capabilities": {
-        "features": ["gpio", "pwm", "adc", "timer"],
-        "max_pwm": 4,
-        "max_timers": 4,
-        "status_led": 12,
-        "demo_led": 13,
-        "adc_max_mv": 2500,
-        "adc_calibrated": True,
-    },
+    "stopping": False,
+    "autostart_inhibited": True,
+    "owner_endpoint": -1,
+    "resources": [],
 }
 
 
@@ -35,22 +44,74 @@ class FakeTransport:
     def __init__(self):
         self.closed = False
         self.commands = []
-        self.respond = True
-        self.refuse = False
+        self.frames = []
+        self.nonce = None
+        self.capture = None
+        self.hello = copy.deepcopy(HELLO)
+        self.jobs = {}
+        self.resources = {}
+        self.next_id = 1
+        self.control = None
         self.silent_op = None
         self.disconnect_op = None
-        self.hello = HELLO.copy()
+        self.refuse = False
+        self.hold_jobs = False
+        self.job_state = "completed"
+        self.result_expired = False
         self.close_delay = 0
+        self.write_delay = 0
+        self.partial = False
         self.loops = []
+        self.respond = True
+        self.bad_response = None
 
     async def open(self):
         self.loops.append(asyncio.get_running_loop())
         self.queue = asyncio.Queue()
 
     async def emit(self, value):
-        data = (json.dumps(value, ensure_ascii=False) + "\n").encode()
-        for n in range(0, len(data), 7):
-            await self.queue.put(data[n : n + 7])
+        """测试用业务结果构造器；实际链路始终传输JSON-RPC。"""
+        value = dict(value)
+        context = {
+            "boot_id": value.pop("boot_id", self.hello["boot_id"]),
+            "session": value.pop("session", self.hello["session"]),
+        }
+        if "jsonrpc" in value:
+            wire = value
+        elif "event" in value:
+            wire = {
+                "jsonrpc": "2.0",
+                "method": value.pop("event"),
+                "params": {"context": context, "args": value},
+            }
+        elif value.get("ok", True):
+            wire = {
+                "jsonrpc": "2.0",
+                "id": value["id"],
+                "result": {"context": context, "value": value.get("result", {})},
+            }
+        else:
+            error = value["error"]
+            reason = error.get("reason", error.get("code", "test_refusal"))
+            code = error["code"] if type(error.get("code")) is int else 1000
+            wire = {
+                "jsonrpc": "2.0",
+                "id": value["id"],
+                "error": {
+                    "code": code,
+                    "message": "Operation rejected",
+                    "data": {"reason": reason, "context": context},
+                },
+            }
+        if self.capture is not None:
+            self.capture.append(wire)
+            return
+        await self.emit_wire(wire)
+
+    async def emit_wire(self, wire):
+        data = (json.dumps(wire) + "\n").encode()
+        for offset in range(0, len(data), 7):
+            await self.queue.put(data[offset : offset + 7])
 
     async def read(self):
         item = await self.queue.get()
@@ -60,54 +121,178 @@ class FakeTransport:
 
     async def write(self, data):
         self.loops.append(asyncio.get_running_loop())
-        command = json.loads(data)
+        if self.write_delay:
+            await asyncio.sleep(self.write_delay)
+        if self.partial:
+            raise ConnectionError("partial write")
+        frame = json.loads(data)
+        self.frames.append(frame)
+        if isinstance(frame, list):
+            self.capture = []
+            for command in sorted(frame, key=lambda c: c["method"] != "outputs.stop"):
+                await self.handle(command)
+            messages = list(reversed(self.capture))
+            self.capture = None
+            await self.emit_wire(messages)
+        else:
+            await self.handle(frame)
+
+    async def handle(self, wire):
+        assert wire["jsonrpc"] == "2.0" and "v" not in wire
+        context, p = (
+            wire["params"]
+            if isinstance(wire["params"], list)
+            else (wire["params"].get("context", {}), wire["params"].get("args", {}))
+        )
+        op = wire["method"]
+        command = {"id": wire.get("id"), "op": op, "params": p, "context": context}
         self.commands.append(command)
-        op = command["op"]
-        if op == self.disconnect_op:
-            await self.queue.put(ConnectionError("模拟设备断线"))
+        if op != "hello":
+            assert type(context["seq"]) is int
+            self.hello["sequence_high"] = max(self.hello["sequence_high"], context["seq"])
+        if self.disconnect_op == op:
+            await self.queue.put(ConnectionError("test disconnect"))
+            return
+        if op == self.silent_op or not self.respond:
+            return
+        if self.refuse and op != "hello":
+            await self.emit({"id": command["id"], "ok": False, "error": {"code": "test_refusal"}})
             return
         if op == "hello":
+            nonce = context["client_nonce"]
+            if self.nonce is not None and nonce != self.nonce:
+                self.hello["session"] += "-new"
+                self.hello["sequence_high"] = 0
+                self.control = None
+            self.nonce = nonce
             result = self.hello
-        elif not self.respond or op == self.silent_op:
-            return
-        elif self.refuse:
-            await self.emit(
-                {
-                    "v": 1,
-                    "id": command["id"],
-                    "ok": False,
-                    "error": {"code": "pin_busy", "message": "引脚已占用"},
-                }
+        elif op == "control.acquire":
+            self.control = "control-test"
+            result = {"control": self.control}
+        elif op == "control.release":
+            self.control = None
+            result = {}
+        elif op == "state":
+            result = {
+                **STATE,
+                "page": p.get("page", 0),
+                "resources": list(self.resources.values())[
+                    p.get("page", 0) * 4 : p.get("page", 0) * 4 + 4
+                ],
+                "owner_endpoint": 0 if self.control else -1,
+            }
+        elif op == "capabilities":
+            result = {"page": p.get("page", 0), "pages": 28, "items": []}
+        elif op == "diagnostics":
+            result = {
+                "rejected": 0,
+                "stale_completions": 0,
+                "lost_notifications": 0,
+                "timing": "software_monotonic",
+                "system": {},
+            }
+        elif op == "job.get":
+            result = copy.deepcopy(self.jobs[p["job_id"]])
+            if not self.hold_jobs:
+                result["state"] = self.job_state
+            result["result_expired"] = self.result_expired
+        elif op == "job.cancel":
+            self.job_state = "cancelled"
+            result = copy.deepcopy(self.jobs[p["job_id"]])
+            result["cancel_requested"] = True
+        elif op == "resource.get":
+            result = self.resources[p["resource"]]
+        elif (
+            op.startswith(
+                (
+                    "resource.open",
+                    "resource.call",
+                    "resource.close",
+                    "storage.",
+                    "ota.",
+                    "wifi.",
+                    "mqtt.",
+                    "espnow.",
+                    "power.",
+                    "system.",
+                )
             )
-            return
-        elif op in ("adc.read", "adc.start"):
-            result = SAMPLE
-        elif op == "gpio.read":
-            result = {"pin": command["params"]["pin"], "level": 1}
+            or op == "outputs.stop"
+        ):
+            resource = 0
+            action = op
+            if op == "resource.open":
+                resource = self.next_id
+                self.next_id += 1
+                action = "open"
+                self.resources[resource] = {
+                    "id": resource,
+                    "instance": resource,
+                    "kind": p["kind"],
+                    "state": "ready",
+                    "pin_mask": sum(1 << v for v in p["pins"].values()),
+                    "definition": p,
+                    "parent": p.get("parent", 0),
+                }
+            elif op == "resource.call":
+                resource = p["resource"]
+                action = p["action"]
+            elif op == "resource.close":
+                resource = p["resource"]
+                self.resources.pop(resource, None)
+                action = "close"
+            elif op == "outputs.stop":
+                self.control = None
+                self.resources.clear()
+            result = {
+                "job_id": self.next_id,
+                "resource": resource,
+                "state": "accepted",
+                "action": action,
+                "driver_error": 0,
+                "external_effect_possible": False,
+                "result_expired": False,
+                "cancel_requested": False,
+            }
+            self.next_id += 1
+            self.jobs[result["job_id"]] = copy.deepcopy(result)
+            if op == "outputs.stop":
+                self.jobs[result["job_id"]]["result"] = {
+                    "cleanup_faults": 0,
+                    "persist_error": 0,
+                    "autostart_inhibited": True,
+                }
         else:
-            result = STATE
-        await self.emit({"v": 1, "id": command["id"], "ok": True, "result": result})
+            result = {}
+        response = {"id": command["id"], "ok": True, "result": result}
+        if self.bad_response:
+            response = self.bad_response(response)
+        await self.emit(response)
 
     async def close(self):
-        await asyncio.sleep(self.close_delay)
-        self.loops.append(asyncio.get_running_loop())
+        if self.close_delay:
+            await asyncio.sleep(self.close_delay)
         self.closed = True
 
 
 class FakeBackend:
-    def __init__(self):
-        self.transports = []
-        self.configure = lambda transport: None
-        self.loops = []
+    def __init__(self, transport=None):
+        self.connection = transport or FakeTransport()
+        self.discovered = False
 
     async def discover(self, kind):
-        self.loops.append(asyncio.get_running_loop())
-        return [{"id": "test", "name": f"{kind} 设备"}]
+        self.discovered = True
+        return [{"id": "test", "name": "LIMIVIA-test"}]
 
-    def transport(self, kind, target):
-        if target != "test":
-            raise ValueError("请重新搜索设备")
-        transport = FakeTransport()
-        self.configure(transport)
-        self.transports.append(transport)
-        return transport
+    def transport(self, kind, target, options=None):
+        return self.connection
+
+
+async def result(connection, request_id, *, accepted=False):
+    async with asyncio.timeout(2):
+        while True:
+            event = await connection.recv()
+            if getattr(event, "request_id", None) == request_id:
+                if event.type == "command.accepted" and not accepted:
+                    continue
+                return event
