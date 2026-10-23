@@ -1,7 +1,4 @@
-import time
-
-from ._common import (
-    DurationOption,
+from .._common import (
     Kind,
     KindOption,
     PinOption,
@@ -13,18 +10,12 @@ from ._common import (
 )
 
 
-def main(
-    kind: KindOption = Kind.usb,
-    target: TargetOption = None,
-    pin: PinOption = 13,
-    duration: DurationOption = 1,
-):
+def main(kind: KindOption = Kind.usb, target: TargetOption = None, pin: PinOption = 0):
     with (
         connect_sync(kind, target, control=True) as c,
-        resource_sync(c, "gpio", {"pin": pin}, {"mode": "output", "level": 1}) as resource,
+        resource_sync(c, "adc", {"pin": pin}, {}) as resource,
     ):
         print(wait(c, c.resource.call(resource=resource, action="read", args={})))
-        time.sleep(duration)
 
 
 if __name__ == "__main__":

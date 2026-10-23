@@ -1,6 +1,6 @@
 import asyncio
 
-from ._common import Kind, KindOption, TargetOption, await_result, connect_async, execute
+from .._common import Kind, KindOption, TargetOption, await_result, connect_async, execute
 
 
 async def run(kind: Kind, target: str | None):

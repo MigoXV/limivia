@@ -1,4 +1,5 @@
 import json
+import secrets
 from pathlib import Path
 from typing import cast
 
@@ -178,6 +179,7 @@ def test_real_firmware_frames_decode_and_bridge_without_shape_invention(case):
 
 
 def test_validation_errors_do_not_echo_credentials():
+    password = secrets.token_urlsafe(24)
     with pytest.raises(InvalidCommandError) as error:
-        parse_command({"params": {"password": "do-not-echo-secret"}})
-    assert "do-not-echo-secret" not in str(error.value)
+        parse_command({"params": {"password": password}})
+    assert password not in str(error.value)

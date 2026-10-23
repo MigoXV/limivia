@@ -1,6 +1,6 @@
 from limivia.types import BinaryResult
 
-from ._common import Kind, KindOption, TargetOption, connect_sync, execute, resource_sync, wait
+from .._common import Kind, KindOption, TargetOption, connect_sync, execute, resource_sync, wait
 
 
 def main(kind: KindOption = Kind.usb, target: TargetOption = None):

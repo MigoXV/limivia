@@ -2,7 +2,7 @@
 
 import asyncio
 
-from ._common import (
+from .._common import (
     Kind,
     KindOption,
     TargetOption,

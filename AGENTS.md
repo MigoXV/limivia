@@ -8,5 +8,7 @@
 - 同步门面共用持续运行的异步核心，不能每调用创建新循环。普通、管理与停止分别有界；半帧、过期会话、boot变化和缓冲溢出必须明确处理。
 - 命令不自动重试/重放、不隐式抢控制或停止设备；凭据不写日志。网络库不得自动重连后重发控制命令。
 - CLI为limivia.commands.app/Typer；库导入不配置全局日志，示例导入和--help不访问硬件。
-- 默认验证：poetry run pytest -q、poetry run ruff check src tests examples、poetry run mypy、poetry check --lock、poetry build。分批本地提交，不自动推送。
+- 按改动范围选择验证；测试数据、文档或示例整理只运行相关离线测试与静态检查，不默认重新构建或操作实机。SDK运行代码、依赖或打包变更的完整验证命令：poetry run pytest -q、poetry run ruff check src tests examples、poetry run mypy、poetry check --lock、poetry build。
+- 后续所有任务均按逻辑分批本地提交，可独立审阅的改动分别提交，不合成单个大提交，不自动推送。
+- 测试用凭据在运行时临时生成，不提交固定假密码或完整的内嵌凭据URL；保留凭据脱敏与URL拒绝测试。
 - 模拟设备、真实客户端loopback网络与单板实测分别记录。实机需明确端口及MAC，沿用已有目标授权；不得用内部回环或模拟broker冒充外部互通/物理测量。

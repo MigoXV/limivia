@@ -3,7 +3,7 @@ from typing import Annotated
 
 import typer
 
-from ._common import (
+from .._common import (
     DurationOption,
     Kind,
     KindOption,
@@ -20,17 +20,14 @@ def main(
     target: TargetOption = None,
     pin: PinOption = 13,
     duration: DurationOption = 1,
-    frequency: Annotated[int, typer.Option(min=1)] = 1000,
-    duty: Annotated[float, typer.Option(min=0, max=100)] = 25,
-    breath_ms: Annotated[int, typer.Option(min=0)] = 0,
+    high_ms: Annotated[int, typer.Option(min=10)] = 100,
+    low_ms: Annotated[int, typer.Option(min=10)] = 100,
+    count: Annotated[int, typer.Option(min=0)] = 0,
 ):
     with (
         connect_sync(kind, target, control=True) as c,
         resource_sync(
-            c,
-            "pwm",
-            {"pin": pin},
-            {"frequency": frequency, "resolution": 10, "duty": duty, "breath_ms": breath_ms},
+            c, "timer", {"pin": pin}, {"high_ms": high_ms, "low_ms": low_ms, "count": count}
         ),
     ):
         time.sleep(duration)

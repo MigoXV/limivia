@@ -1,6 +1,6 @@
 """识别当前镜像并读取全部能力；不申请控制或停止设备。"""
 
-from ._common import Kind, KindOption, TargetOption, connect_sync, execute, wait
+from .._common import Kind, KindOption, TargetOption, connect_sync, execute, wait
 
 
 def main(kind: KindOption = Kind.usb, target: TargetOption = None):

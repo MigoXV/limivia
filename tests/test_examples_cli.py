@@ -5,13 +5,18 @@ from pathlib import Path
 
 import pytest
 
-MODULES = [p.stem for p in Path("examples").glob("*.py") if not p.name.startswith("_")]
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+MODULES = sorted(
+    "examples." + ".".join(p.relative_to(EXAMPLES).with_suffix("").parts)
+    for p in EXAMPLES.rglob("*.py")
+    if not p.name.startswith("_")
+)
 
 
 @pytest.mark.parametrize("name", MODULES)
 def test_help_does_not_access_hardware(name):
     result = subprocess.run(
-        [sys.executable, "-m", f"examples.{name}", "--help"],
+        [sys.executable, "-m", name, "--help"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -28,4 +33,4 @@ def test_import_is_offline_and_does_not_configure_logging(name, monkeypatch):
 
     monkeypatch.setattr("logging.basicConfig", forbidden)
     monkeypatch.setattr("limivia.transports.DeviceBackend.discover", forbidden)
-    importlib.import_module("examples." + name)
+    importlib.import_module(name)

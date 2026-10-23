@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import secrets
 import ssl
 import subprocess
 import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from urllib.parse import urlunsplit
 
 import pytest
 from websockets.asyncio.server import serve
@@ -279,10 +281,14 @@ def test_network_frames_reject_binary_or_oversize_or_multiline(payload):
 
 
 def test_network_urls_and_secrets():
-    options = MQTTOptions(device_id=HELLO["device_id"], username="user", password="never-log-me")
-    assert "never-log-me" not in repr(options)
+    username = secrets.token_urlsafe(12)
+    password = secrets.token_urlsafe(24)
+    options = MQTTOptions(device_id=HELLO["device_id"], username=username, password=password)
+    assert username not in repr(options)
+    assert password not in repr(options)
+    credential_url = urlunsplit(("mqtt", f"{username}:{password}@localhost", "", "", ""))
     with pytest.raises(ValueError):
-        MQTTTransport("mqtt://user:secret@localhost", options)
+        MQTTTransport(credential_url, options)
     with pytest.raises(ValueError):
         MQTTTransport("mqtt://localhost/topic", options)
     with pytest.raises(ValueError):

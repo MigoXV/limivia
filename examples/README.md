@@ -2,30 +2,54 @@
 
 使用Python3.12和Poetry。先运行只读查询，再按任务选择资源示例。`--help`及导入均不访问设备；真正运行资源示例会改变板卡输出或文件。
 
+## 目录导航
+
+|目录|内容|
+|---|---|
+|[device/](device/)|设备发现、状态快照和事件订阅|
+|[peripherals/](peripherals/)|GPIO、PWM、timer、ADC和UART资源操作|
+|[workflows/](workflows/)|按能力选择功能、文件存储、离线流程和全局停止|
+
+同一主题下用 `sync_` 和 `async_` 前缀区分同步、异步入口；`discover` 是同步只读示例。共享连接、CLI参数和事件等待工具集中在根目录 `_common.py`。
+
+## 设备查询与事件
+
 ```bash
-poetry run python -m examples.discover --kind usb
-poetry run python -m examples.async_profile --kind usb
-poetry run python -m examples.sync_state --kind usb
-poetry run python -m examples.async_state --kind usb
-poetry run python -m examples.sync_gpio --kind usb --pin 13 --duration 1
-poetry run python -m examples.sync_pwm --kind usb --frequency 1000 --duty 25
-poetry run python -m examples.sync_timer --kind usb --high-ms 100 --low-ms 100 --count 2
-poetry run python -m examples.sync_adc --kind usb --pin 0
-poetry run python -m examples.async_adc --kind usb --pin 0 --samples 3 --interval-ms 100
-poetry run python -m examples.async_events --kind usb --duration 2
-poetry run python -m examples.sync_uart --kind usb
-poetry run python -m examples.sync_storage --kind usb
-poetry run python -m examples.sync_flow --kind usb
-poetry run python -m examples.sync_cleanup --kind usb
+poetry run python -m examples.device.discover --kind usb
+poetry run python -m examples.device.sync_state --kind usb
+poetry run python -m examples.device.async_state --kind usb
+poetry run python -m examples.device.async_events --kind usb --duration 2
 ```
+
+## 外设操作
+
+```bash
+poetry run python -m examples.peripherals.sync_gpio --kind usb --pin 13 --duration 1
+poetry run python -m examples.peripherals.sync_pwm --kind usb --frequency 1000 --duty 25
+poetry run python -m examples.peripherals.sync_timer --kind usb --high-ms 100 --low-ms 100 --count 2
+poetry run python -m examples.peripherals.sync_adc --kind usb --pin 0
+poetry run python -m examples.peripherals.async_adc --kind usb --pin 0 --samples 3 --interval-ms 100
+poetry run python -m examples.peripherals.sync_uart --kind usb
+```
+
+## 完整工作流
+
+```bash
+poetry run python -m examples.workflows.async_profile --kind usb
+poetry run python -m examples.workflows.sync_storage --kind usb
+poetry run python -m examples.workflows.sync_flow --kind usb
+poetry run python -m examples.workflows.sync_cleanup --kind usb
+```
+
+## 连接与运行约定
 
 USB/BLE扫描得到多台设备时必须`--target`明确选择；稳定by-id端口需解析到扫描到的原生USB端口。默认示例使用USB，库的旧默认连接方式仍为BLE。可用`LIMIVIA_TRANSPORT/LIMIVIA_TARGET`设置默认参数，`LIMIVIA_DEVICE_ID`校验预期MAC。
 
 网络不扫描：
 
 ```bash
-poetry run python -m examples.sync_state --kind ws --target ws://板卡IP/v3
-LIMIVIA_DEVICE_ID=目标MAC poetry run python -m examples.sync_state --kind mqtt --target mqtts://broker.example:8883
+poetry run python -m examples.device.sync_state --kind ws --target ws://板卡IP/v3
+LIMIVIA_DEVICE_ID=目标MAC poetry run python -m examples.device.sync_state --kind mqtt --target mqtts://broker.example:8883
 ```
 
 MQTT另使用`LIMIVIA_MQTT_USERNAME/LIMIVIA_MQTT_PASSWORD`；TLS证书文件通过`LIMIVIA_CA_FILE/LIMIVIA_CERT_FILE/LIMIVIA_KEY_FILE`提供。SDK不会自动配置板上Wi-Fi或broker，也不自动发布/重连。不要在URL中嵌入凭据。

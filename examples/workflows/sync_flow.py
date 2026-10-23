@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 
-from ._common import Kind, KindOption, TargetOption, connect_sync, execute, wait
+from .._common import Kind, KindOption, TargetOption, connect_sync, execute, wait
 
 
 def main(kind: KindOption = Kind.usb, target: TargetOption = None):

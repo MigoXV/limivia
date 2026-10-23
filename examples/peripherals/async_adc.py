@@ -5,7 +5,7 @@ from typing import Annotated
 
 import typer
 
-from ._common import (
+from .._common import (
     Kind,
     KindOption,
     PinOption,

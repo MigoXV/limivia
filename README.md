@@ -157,13 +157,13 @@ SDK默认RPC期限6秒，作业跟踪期限30秒，查询间隔100ms，普通待
 [示例指南](examples/README.md)、[v3契约快照](docs/protocol-v3.md)、[迁移说明](docs/migration-v3.md)、[验证记录](docs/verification.md)。例如：
 
 ```bash
-poetry run python -m examples.discover --kind usb
-poetry run python -m examples.async_profile --kind usb
-poetry run python -m examples.sync_state --kind usb
-poetry run python -m examples.sync_uart --kind usb --target /dev/ttyACM0
-poetry run python -m examples.sync_storage --kind usb
-poetry run python -m examples.sync_flow --kind usb
-poetry run python -m examples.async_adc --kind usb --samples 3
+poetry run python -m examples.device.discover --kind usb
+poetry run python -m examples.workflows.async_profile --kind usb
+poetry run python -m examples.device.sync_state --kind usb
+poetry run python -m examples.peripherals.sync_uart --kind usb --target /dev/ttyACM0
+poetry run python -m examples.workflows.sync_storage --kind usb
+poetry run python -m examples.workflows.sync_flow --kind usb
+poetry run python -m examples.peripherals.async_adc --kind usb --samples 3
 ```
 
 这些是源码示例，资源示例会实际操纵目标板；不作为wheel内置模块。WS/MQTT同样使用`--kind/--target`，凭据通过环境变量提供，不通过命令行打印。
