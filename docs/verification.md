@@ -1,5 +1,19 @@
 # SDK 本地构建与验证记录
 
+## 0.3.0a2 PyPI 发布确认（dev）
+
+用户明确授权使用 .bashrc 的 PyPI token 发布本版本。已通过 Poetry 默认官方 PyPI 上传 wheel 和 sdist；凭据仅在内存及子进程环境中使用，没有输出或写入文件，未执行 .bashrc 中的命令。
+
+- 官方版本页面：https://pypi.org/project/limivia/0.3.0a2/
+- 官方 JSON 版本记录已确认两个文件均可见，SHA256 与本地上传文件完全一致。
+- 发布前去掉 README 与迁移文档中过期的“仅本地构建/未发布”描述，重新运行 poetry check --lock 和 poetry build。SDK 源码与此前743项测试通过的版本一致，未重复全量测试。
+- 本轮未操作实物、未修改固件或 server、未推送 Git 或创建发布 tag。
+
+实际发布产物（文档元数据更新后重新构建，区别于此前本地构建摘要）：
+
+- `limivia-0.3.0a2-py3-none-any.whl`：`cd6eb31703a6e63267dd2f865f3f7f33b4ccd970a5969e011b855a75b76653ed`；PyPI 上传时间 `2026-10-24T17:17:04.778279Z`。
+- `limivia-0.3.0a2.tar.gz`：`08054727c47c9f7dc101583170cd1b098f1ad7e194603f048e4aebb41230ded8`；PyPI 上传时间 `2026-10-24T17:17:06.642760Z`。
+
 ## 0.3.0a2 本地构建（feature/api）
 
 2026-10-25，版本提交 `1738814`。按用户要求将 pyproject.toml、导入 __version__ 及当前使用文档更新为 **0.3.0a2**；依赖、线协议与固件版本保持不变，历史 0.3.0a1 契约与验证记录保留。

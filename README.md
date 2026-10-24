@@ -2,7 +2,7 @@
 
 **0.3.0a2**，面向合宙 CORE ESP32-C3 简约版固件 **0.3.0-dev / JSON-RPC 2.0 / 协议 v3**。USB、BLE、WebSocket、MQTT 共用协议核心；同步 `Limivia` 和异步 `AsyncLimivia` 提供相同的业务语义。
 
-普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a2`，仅本地构建，未发布；不要直接将本地 SDK 安装到尚未适配的 server 环境。
+普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a2`；不要直接将本地 SDK 安装到尚未适配的 server 环境。
 
 ## 点亮 GPIO13
 

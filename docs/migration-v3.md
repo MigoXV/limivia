@@ -1,6 +1,6 @@
 # SDK 0.3.0a2 业务接口迁移
 
-当前开发分支为 `feature/api`，业务接口版本为 `0.3.0a2`，仅本地构建，没有发布。线协议保持 JSON-RPC v3，不改 server 或固件。需要同时核对 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`；历史自定义 v3 与 v1/v2 均不兼容。
+业务接口版本为 `0.3.0a2`。线协议保持 JSON-RPC v3，不改 server 或固件。需要同时核对 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`；历史自定义 v3 与 v1/v2 均不兼容。
 
 ## 使用命名常量
 

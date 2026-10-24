@@ -1,7 +1,7 @@
 # LIMIVIA SDK工程约定
 
 - 中文沟通与README；Python3.12，通过Poetry和项目内.venv运行。
-- SDK位于src/limivia，server是相邻独立仓库，依赖方向server→SDK。当前用户授权仅SDK v3适配、版本0.3.0a2、本地build，不发布/推送，不读取发布令牌，不改server或固件。
+- SDK位于src/limivia，server是相邻独立仓库，依赖方向server→SDK。当前版本0.3.0a2；用户已明确授权使用.bashrc中的PyPI令牌发布该版本，令牌不得输出或写入文件。不推送Git，不改server或固件；后续版本发布仍需明确授权。
 - 当前使用协议v3，USB/BLE/WS/MQTT共用核心，拒绝v1/v2，移除旧引脚命令。契约快照docs/protocol-v3.md注明固件来源；运行/构建不依赖相邻检出。后续跨仓库变更需核对各自版本。
 - 公开同步Limivia/异步AsyncLimivia；普通业务接口等待设备确认后返回类型化结果，raw保留提交返回请求ID及类型化事件流。设备accepted与job终态分开，后台查询不泄漏为公开请求结果；独立订阅不得抢读业务结果。
 - types保存Pydantic模型和TypedDict；公开事件联合类型按type收窄，发布py.typed；constants.py统一协议值、固定选项与板级引脚命名，_schema.py统一操作参数；事件Literal保留收窄并以完整性测试防漂移，能力与引脚政策由固件裁定。
