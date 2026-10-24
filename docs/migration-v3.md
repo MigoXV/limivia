@@ -1,45 +1,62 @@
-# 迁移到 JSON-RPC v3 / SDK 0.3.0a1
+# SDK 0.3.0a2 业务接口迁移
 
-此次保持开发版版本号，但线协议发生破坏性变化。历史 0.3.0a1 的自定义包络不能连接当前固件，也不能以 protocol=3 判定兼容；必须匹配 `jsonrpc=2.0` 和 `contract=limivia-v3-jsonrpc2`。没有旧包络兼容或降级。server 保持原版本，本轮不改动其环境。
+当前开发分支为 `feature/api`，业务接口版本为 `0.3.0a2`，仅本地构建，没有发布。线协议保持 JSON-RPC v3，不改 server 或固件。需要同时核对 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`；历史自定义 v3 与 v1/v2 均不兼容。
 
-## 当前版本的调用变化
+## 使用命名常量
 
-- 请求改为 jsonrpc/id/method/params；业务参数位于 params.args，会话和 seq 位于 params.context。位置参数为 [context,args]。
-- SDK 请求 ID、wire ID、seq 独立，job_id 用于设备异步作业。内部查询不占公开请求 ID，不产生公开查询结果。
-- `error.code` 从业务字符串改为整数或 None；原字符串判断改用 `error.reason`，完整附加信息在 `error.data`。本地错误 source=sdk、code=None。
-- `connection.identity` 提供类型化身份；`connection.discover()` 返回请求 ID，通过 discovery.completed 提供完整能力和原始分页。发现复用已有会话，不撤权。
-- `connection.batch([...])` 返回每项请求 ID 列表；应用的单个事件消费者必须保存乱序结果，不能依次等待一个 ID 时丢弃其他 ID 的事件。
-- `connection.state.snapshot()` 代替应用自己拼接分页；snapshot_expired 或跨页 revision/epoch 变化时最多采集三次。
-- stop 的 accepted 不是完成；只有原始 job 的清理与持久化确认后才有成功事件。晚到的旧控制结果不恢复当前 token。
-- 新 boot 失效旧 job/资源/能力。相同 boot 的显式断线恢复可按已知 job 查询，例如 light sleep；不重发睡眠或其他写事务。
+公开常量集中在 `limivia.constants`，常用的 `Pins/Level/TransportKind/EventType` 同时从根包导出。使用 `board.gpio.output(Pins.LED, value=Level.HIGH)`、`event.type == EventType.JOB_COMPLETED` 等写法，避免业务代码拼写协议值或混淆 GPIO 编号。
 
-`gpio.group_read(resources=[id,...])` 门面保留整数 ID 输入，但 wire args 使用资源对象数组。直接 send 应传 `{"resources":[{"resource":id}]}`；上游协议文档的整数数组描述与当前 C 实现不符，已用真实设备拒绝和成功路径核实。
+原有字符串、整数、JSON 值和事件 `Literal` discriminator 均保持兼容，不需要 `.value` 转换；`Operation`、`ResourceKind` 等类型别名继续用于类型注解，值常量分别为 `OperationName`、`PeripheralKind`。未知错误原因和 profile 仍保留原始值。
 
-## 资源与作业
+`Pins` 的板级别名依据现有固件契约：D5 LED 为 GPIO13，D4 状态灯为 GPIO12；BOOT、USB 和其他保留脚仍由固件限制。UART 示例的 GPIO20/21 不作为固定 TX/RX 别名。参数表仍由 `_schema.py` 管理，运行时协议值统一由 `constants.py` 命名。
 
-|旧接口|v3操作|
+## 从请求 ID 迁到业务结果
+
+|旧用法|业务接口|
 |---|---|
-|gpio.set/read(pin)|resource.open(kind=GPIO,pins/config)→resource.call(resource,action,args)→close|
-|pwm.set/stop(pin)|open(kind=pwm)→call(duty/fade)→close|
-|adc.read/start/stop(pin)|open(kind=adc,interval_ms)→call(read/events)→close|
-|timer.start/stop(pin)|open(kind=timer,config)→查询→close|
-|pin.release/recover(pin)|resource.close/recover(resource)，父资源有子资源时显式cascade|
-|单页state/capabilities|显式page，状态后续页携带revision|
-|旧adc.sample通知|订阅data.available提示，再call(events/read)读取有界队列|
-|outputs.stop成功快照|command.accepted→job.completed；确认持久抑制与清理结果|
+|扫描、选唯一设备、创建客户端和连接|`with Limivia.connect(kind="usb") as board:`|
+|`connection.discover()` → 匹配事件|`board.discover()` → `DeviceDiscovery`|
+|`connection.state.snapshot()` → 匹配事件|`board.state.snapshot()` → `StateSnapshot`|
+|手动 acquire、open、提取 ID、call、finally close|`with board.gpio.output(13, value=1) as led:`，然后 `led.write(0)`|
+|PWM open + resource.call(duty)|`with board.pwm.open(13, frequency=1000) as pwm:`，然后 `pwm.set_duty(25)`|
+|ADC read + result 字段解析|`adc.read()` → `ADCSample`；`adc.events()` → 已解码采样列表|
+|UART Base64 编解码|`uart.write(bytes)` → 字节数，`uart.read(length)` → `bytes`|
+|通用外设资源 ID 与嵌套 call|`board.resources.open(kind, pins=..., config=...)` → 资源对象；`resource.call(action, **args)`|
+|系统命令返回请求 ID|同名业务命名空间返回 `OperationResult`，数据为 `.data`|
 
-参数kind使用协议小写字符串。资源ID、job_id、buffer_id、flow_id仅在对应boot内有效；新boot应重新发现状态，不沿用旧句柄。不从引脚号猜资源ID。
+异步版本通过 `await` 获得相同结果，资源用 `async with`；资源工厂本身不发送命令。显式打开可用同步 `.open()`、异步 `await .open()`，异步资源本身也可 `await`。
 
-提交仍返回SDK请求ID；另有 wire ID、独立防重复 seq 与设备 job_id。`command.accepted`只表示设备受理，SDK自动查询后才有job.completed/failed/cancelled。同步读取类响应仍有专用事件，其他直接RPC成功为command.completed并使用op区分。
+SDK 自动申请需要的控制权。其他端持有控制时抛 `ControlBusyError`，不会全局停止或隐式抢占。退出资源上下文等待关闭结果，退出板卡上下文清理其管理的资源；断连、fault 或超时会明确报告无法确认释放。若业务代码已有异常或取消，清理错误附加在原异常上。
 
-`job.get/cancel`是显式查询/取消请求，返回command.completed/result，不会因为结果自身含job_id再建立新跟踪器。flow.start/stop和cascade关闭返回的状态按协议解释，不能把RPC成功当作流程/整树已结束。
+## 保留提交式 raw 接口
 
-## 连接与恢复
+需要原有协议处理方式时，将旧操作放到 `board.raw`：
 
-保留同步/异步门面及单消费者事件流。USB/BLE继续扫描并明确选择，新增WS/MQTT显式URL及类型化选项。MQTTOptions必须提供目标device_id，库为每次连接生成新逻辑客户端名。网络依赖默认安装，无需extras。
+```python
+from limivia import TransportKind
+with Limivia.connect(kind=TransportKind.USB) as board:
+    raw = board.raw
+    request_id = raw.state.retrieve(page=0)
+    for event in raw:
+        if event.type == "state.completed" and event.request_id == request_id:
+            print(event.result.to_json())
+            break
+```
 
-任何写操作超时、断线或结果过期都不自动重试。SDK失败携带source、may_have_executed及已知job_id；设备失败保留driver_error与external_effect_possible。关闭连接不停止设备实验。需要紧急全局停止时走独立outputs.stop入口，随后重新获取控制权。
+`raw.send/hello/discover/batch/resource/job/control` 等仍返回请求 ID；作业仍先有 `command.accepted`，再有终态事件。`raw` 不自动申请控制，也不负责关闭其创建的设备资源。原始普通/管理/停止通道、seq 窗口、帧上限、半帧处置和禁止写操作重放的规则保持。
 
-旧event_to_wire已更新为v3真实RPC/通知映射；SDK查询得到的job终态返回None，不伪造第二条设备RPC响应。服务端以后适配时需显式桥接SDK事件，不能继续假设每个请求只有一条旧式completed事件。
+业务方法不再直接提供 `send/recv/batch`、裸 `resource` 或裸 `job` 命名空间。显式作业使用 `board.jobs.submit/get` 与 `Job.status/cancel/wait`。`submit` 等待设备受理，`wait` 才等待执行结果；超时或取消等待不自动发送设备取消。
 
-完整契约见[来源注明的快照](protocol-v3.md)，可运行流程见[示例指南](../examples/README.md)。
+每个 raw 订阅各有一个消费者；可用 `with raw.subscribe() as events:` / `async with raw.subscribe()` 创建独立副本。订阅需要在提交前创建，除初始握手事件外不回放历史结果。慢订阅现在显式报自身溢出，其他订阅与业务等待继续；不再因为某个消费者不读取而终止整个业务连接。
+
+## 通知与结果语义
+
+通知改用 `board.notifications.subscribe(topics=[...])`；同步 `with/for`，异步 `async with/async for`。SDK 合并设备订阅，独立分发给各消费者，业务 Future 不读取用户队列。通知仍是可查询的最佳努力提示，不承载完整外设数据；丢失后用状态、作业及资源查询恢复。
+
+完成的含义由固件契约决定：GPIO 写作业完成确认驱动已写入；UART 写入字节数与发送排空分开；PWM fade 仅确认渐变启动；flow.start/stop 不代表整个流程运行结束；级联关闭需要确认原资源树释放；停止需要确认清理及持久化。SDK 不将本地入队或设备 accepted 当成完成。
+
+请求 ID、wire ID、seq 和 job_id 仍独立；后台心跳及 job.get 不产生公开请求结果。boot 变化使旧句柄失效，显式重新连接不能重放写事务。已知 job 可在核对原 boot 后通过新连接的 `jobs.get(job_id)` 查询，结果过期或历史淘汰都抛未知结果异常。
+
+历史线协议迁移还包括：JSON-RPC args/context 分离、错误整数码与 `error.reason/data`、旧引脚命令移除。`gpio.group.read` 的真实 wire 参数为资源对象数组；`raw.gpio.group_read(resources=[id,...])` 继续负责该映射。完整来源见[冻结契约](protocol-v3.md)。
+
+server 的后续适配需要单独核对自身版本；本轮不改动其代码或安装环境。本轮没有对新业务 API 做单板验收。

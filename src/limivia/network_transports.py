@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from paho.mqtt import client as mqtt
 from websockets.asyncio.client import ClientConnection, connect
 
+from .constants import MQTTProtocol
 from .types import MQTTOptions, WebSocketOptions
 
 
@@ -120,8 +121,8 @@ class MQTTTransport:
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id="lv-" + uuid.uuid4().hex[:20],
-            protocol=mqtt.MQTTv5 if options.protocol == "5.0" else mqtt.MQTTv311,
-            clean_session=None if options.protocol == "5.0" else True,
+            protocol=mqtt.MQTTv5 if options.protocol == MQTTProtocol.V5 else mqtt.MQTTv311,
+            clean_session=None if options.protocol == MQTTProtocol.V5 else True,
             reconnect_on_failure=False,
         )
         self.client.connect_timeout = 5

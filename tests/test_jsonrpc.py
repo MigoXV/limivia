@@ -98,7 +98,7 @@ def test_batch_out_of_order_and_three_independent_counters():
     async def case(c, t):
         await result(c, await c.control.acquire())
         # Internal queries consume wire IDs and seq but never public request IDs.
-        await c._rpc("session.ping", {})
+        await c._core._rpc("session.ping", {})
         ids = await c.batch(
             [{"type": "state", "params": {}}, {"type": "system.time", "params": {}}]
         )
@@ -152,7 +152,7 @@ def test_uncorrelated_error_is_not_assigned_to_a_pending_request(wire_id):
         event = await c.recv()
         assert event.type == "rpc.error" and event.error.code == -32700
         assert not hasattr(event, "request_id")
-        assert rid in c._pending
+        assert rid in c._core._pending
 
     asyncio.run(connect_test(case))
 
@@ -160,11 +160,11 @@ def test_uncorrelated_error_is_not_assigned_to_a_pending_request(wire_id):
 def test_same_nonce_preserves_control_and_new_nonce_revokes_it():
     async def case(c, t):
         await result(c, await c.control.acquire())
-        token = c._control
+        token = c._core._control
         await result(c, await c.hello())
-        assert c._control == token
+        assert c._core._control == token
         await result(c, await c.hello(client_nonce="b" * 32))
-        assert c._control is None
+        assert c._core._control is None
         assert [x["context"]["client_nonce"] for x in t.commands if x["op"] == "hello"][
             -1
         ] == "b" * 32
@@ -178,10 +178,10 @@ def test_seq_exhaustion_rotates_without_replaying_or_reacquiring():
     async def case(c, t):
         await result(c, await c.control.acquire())
         before = t.nonce
-        c._send_sequence = 2147483647
+        c._core._send_sequence = 2147483647
         event = await result(c, await c.state.retrieve())
         assert event.type == "state.completed"
-        assert t.nonce != before and c._control is None
+        assert t.nonce != before and c._core._control is None
         assert t.commands[-1]["context"]["seq"] == 1
         assert sum(x["op"] == "state" for x in t.commands) == 1
         assert sum(x["op"] == "control.acquire" for x in t.commands) == 1
@@ -192,12 +192,12 @@ def test_seq_exhaustion_rotates_without_replaying_or_reacquiring():
 def test_heartbeat_has_reserved_slot_while_query_is_delayed():
     async def case(c, t):
         t.silent_op = "job.get"
-        c._heartbeat_interval = 0.01
+        c._core._heartbeat_interval = 0.01
         rid = await c.system.time()
         await result(c, rid, accepted=True)
         await asyncio.sleep(0.06)
         assert any(x["op"] == "session.ping" for x in t.commands)
-        assert not c._closed
+        assert not c._core._closed
 
     asyncio.run(connect_test(case, timeout=0.2))
 
@@ -214,6 +214,7 @@ def test_late_batch_acquire_cannot_rebind_after_stop():
         t = DelayedBatch()
         async with AsyncLimivia(backend=FakeBackend(t), job_poll_interval=0.01) as client:
             async with client.devices.connect(kind="usb", target="test") as c:
+                c = c.raw
                 ids = await c.batch(
                     [{"type": "control.acquire", "params": {}}, {"type": "state", "params": {}}]
                 )
@@ -223,7 +224,7 @@ def test_late_batch_acquire_cannot_rebind_after_stop():
                 await FakeTransport.emit_wire(t, t.delayed)
                 events = await collect(c, ids)
                 assert events[ids[0]].type == "command.completed"
-                assert c._control is None
+                assert c._core._control is None
 
     asyncio.run(run())
 
@@ -267,6 +268,7 @@ def test_discovery_reuses_session_and_keeps_unknown_profile():
         t.bad_response = pages
         async with AsyncLimivia(backend=backend) as client:
             async with client.devices.connect(kind="usb", target="test") as c:
+                c = c.raw
                 first = await result(c, await c.discover())
                 assert first.type == "discovery.completed"
                 assert first.result.identity.profile == "future-profile"
@@ -318,7 +320,7 @@ def test_notification_gap_preserves_notice_and_state_recovers():
                 "jsonrpc": "2.0",
                 "method": "state.changed",
                 "params": {
-                    "context": {"boot_id": c.identity.boot_id, "session": c._session},
+                    "context": {"boot_id": c.identity.boot_id, "session": c._core._session},
                     "args": {
                         "event_sequence": 4,
                         "dropped": 2,
@@ -343,6 +345,7 @@ def test_sync_batch_discovery_snapshot_and_identity():
     backend = FakeBackend()
     with Limivia(backend=backend) as client:
         with client.devices.connect(kind="usb", target="test") as c:
+            c = c.raw
             assert c.identity.contract == "limivia-v3-jsonrpc2"
             for submit, kind in [
                 (c.discover, "discovery.completed"),
@@ -369,7 +372,7 @@ def test_window_reserves_stop_without_sending_an_over_window_batch():
         t.silent_op = None
         # Higher-priority replies do not prove an older ordinary frame was admitted.
         for _ in range(59):
-            await c._rpc("session.ping", {})
+            await c._core._rpc("session.ping", {})
         before = len(t.frames)
         ids = await c.batch([{"type": "state", "params": {}}] * 8)
         rejected = await collect(c, ids)
@@ -381,7 +384,7 @@ def test_window_reserves_stop_without_sending_an_over_window_batch():
         )
         assert len(t.frames) == before
         assert (await result(c, await c.outputs.stop())).type == "job.completed"
-        assert not c._closed
+        assert not c._core._closed
         seqs = [x["context"]["seq"] for x in t.commands if x["op"] != "hello"]
         assert max(seqs) - min(seqs) < 64
 
@@ -480,7 +483,7 @@ def test_discovery_cache_key_checks_build_and_profile_independently_of_session()
         first = await result(c, await c.discover())
         assert first.type == "discovery.completed"
         count = sum(x["op"] == "capabilities" for x in t.commands)
-        c.identity = c.identity.model_copy(update={"profile": "new-profile", "build_id": "b" * 64})
+        c._core.identity = c.identity.model_copy(update={"profile": "new-profile", "build_id": "b" * 64})
         second = await result(c, await c.discover())
         assert second.result.identity.profile == "new-profile"
         assert sum(x["op"] == "capabilities" for x in t.commands) == count * 2
@@ -491,7 +494,7 @@ def test_discovery_cache_key_checks_build_and_profile_independently_of_session()
 def test_stop_query_and_heartbeat_keep_reserved_slots_with_saturated_queries():
     async def case(c, t):
         t.silent_op = "state"
-        c._heartbeat_interval = 0.01
+        c._core._heartbeat_interval = 0.01
         for _ in range(3):
             await c.state.retrieve()
         await asyncio.sleep(0.02)
@@ -507,7 +510,7 @@ def test_stop_query_and_heartbeat_keep_reserved_slots_with_saturated_queries():
 
 def test_lost_ping_reply_does_not_pin_window_during_confirmed_job_traffic():
     async def case(c, t):
-        c._heartbeat_interval = 0.01
+        c._core._heartbeat_interval = 0.01
         original = t.emit_wire
         lost = []
 
@@ -522,8 +525,8 @@ def test_lost_ping_reply_does_not_pin_window_during_confirmed_job_traffic():
         t.emit_wire = drop_one_ping
         for _ in range(70):
             assert (await result(c, await c.system.time())).type == "job.completed"
-        assert lost and not c._closed
-        assert lost[0] not in c._sent_sequences
+        assert lost and not c._core._closed
+        assert lost[0] not in c._core._sent_sequences
         assert (await result(c, await c.outputs.stop())).type == "job.completed"
 
     asyncio.run(connect_test(case, timeout=0.5))
@@ -552,7 +555,7 @@ def test_query_and_write_share_the_firmware_ordinary_admission_slot():
 def test_late_internal_error_does_not_leak_after_request_retirement():
     async def case(c, t):
         await c.recv()
-        await c._rpc("session.ping", {})
+        await c._core._rpc("session.ping", {})
         wire_id = t.commands[-1]["id"]
         await t.emit_wire(
             {
@@ -574,7 +577,7 @@ def test_late_internal_error_does_not_leak_after_request_retirement():
 
 def test_readonly_batch_rotates_exhausted_seq_before_actual_send():
     async def case(c, t):
-        c._send_sequence = 2147483647
+        c._core._send_sequence = 2147483647
         ids = await c.batch(
             [{"type": "state", "params": {}}, {"type": "diagnostics", "params": {}}]
         )

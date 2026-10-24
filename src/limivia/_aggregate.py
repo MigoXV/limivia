@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Literal
 
 from ._exceptions import DeviceConnectionError, ProtocolError, QueueFullError
+from .constants import ErrorReason, ErrorSource, OperationName, QueryName
 from .types import (
     ActionCapability,
     CapabilitiesCompletedEvent,
@@ -83,7 +84,7 @@ async def discover(connection: AsyncConnection, refresh: bool) -> DeviceDiscover
     operations: list[OperationCapability] = []
     index, count = 0, identity.capability_pages
     while index < count:
-        reply = await connection._rpc("capabilities", {"page": index})
+        reply = await connection._rpc(OperationName.CAPABILITIES, {"page": index})
         if isinstance(reply, CommandFailedEvent):
             raise QueryFailure(reply.error)
         if not isinstance(reply, CapabilitiesCompletedEvent) or reply.result.page != index:
@@ -130,9 +131,9 @@ async def snapshot(connection: AsyncConnection) -> StateSnapshot:
             args = {"page": index}
             if pages:
                 args["revision"] = pages[0].revision
-            reply = await connection._rpc("state", args)
+            reply = await connection._rpc(OperationName.STATE, args)
             if isinstance(reply, CommandFailedEvent):
-                if reply.error.reason == "snapshot_expired":
+                if reply.error.reason == ErrorReason.SNAPSHOT_EXPIRED:
                     break
                 raise QueryFailure(reply.error)
             if not isinstance(reply, StateCompletedEvent) or reply.result.page != index:
@@ -157,7 +158,11 @@ async def snapshot(connection: AsyncConnection) -> StateSnapshot:
                 pages=pages,
             )
     raise QueryFailure(
-        DeviceError(reason="snapshot_expired", source="sdk", message="三次只读快照均发生变化")
+        DeviceError(
+            reason=ErrorReason.SNAPSHOT_EXPIRED,
+            source=ErrorSource.SDK,
+            message="三次只读快照均发生变化",
+        )
     )
 
 
@@ -165,7 +170,7 @@ async def run(connection: AsyncConnection, op: AggregateOperation, rid: int, ref
     event: DeviceEvent
     try:
         async with asyncio.timeout(connection._job_timeout):
-            if op == "discover":
+            if op == QueryName.DISCOVER:
                 result = await discover(connection, refresh)
                 event = DiscoveryCompletedEvent(
                     request_id=rid,
@@ -191,9 +196,11 @@ async def run(connection: AsyncConnection, op: AggregateOperation, rid: int, ref
             exc.error
             if isinstance(exc, QueryFailure)
             else DeviceError(
-                reason="timeout" if isinstance(exc, TimeoutError) else "invalid_response",
+                reason=ErrorReason.TIMEOUT
+                if isinstance(exc, TimeoutError)
+                else ErrorReason.INVALID_RESPONSE,
                 message="只读聚合查询失败",
-                source="sdk",
+                source=ErrorSource.SDK,
             )
         )
         connection._publish(

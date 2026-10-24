@@ -50,3 +50,10 @@ from .models import ResourceKind as ResourceKind
 from .models import StatePage as StatePage
 from .models import StateSnapshot as StateSnapshot
 from .models import WebSocketOptions as WebSocketOptions
+from .results import ADCSample as ADCSample
+from .results import GPIOConfig as GPIOConfig
+from .results import OperationResult as OperationResult
+from .results import PeripheralEvent as PeripheralEvent
+from .results import PeripheralEvents as PeripheralEvents
+from .results import PWMConfig as PWMConfig
+from .results import UARTConfig as UARTConfig

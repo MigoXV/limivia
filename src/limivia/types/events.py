@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from .._models import Model
+from ..constants import EventType
 from .commands import Operation
 from .models import (
     CapabilitiesPage,
@@ -25,58 +26,58 @@ class ResponseEvent(Model):
 
 
 class HelloCompletedEvent(ResponseEvent):
-    type: Literal["hello.completed"] = "hello.completed"
+    type: Literal["hello.completed"] = EventType.HELLO_COMPLETED
     result: Hello
 
 
 class StateCompletedEvent(ResponseEvent):
-    type: Literal["state.completed"] = "state.completed"
+    type: Literal["state.completed"] = EventType.STATE_COMPLETED
     result: StatePage
 
 
 class CapabilitiesCompletedEvent(ResponseEvent):
-    type: Literal["capabilities.completed"] = "capabilities.completed"
+    type: Literal["capabilities.completed"] = EventType.CAPABILITIES_COMPLETED
     result: CapabilitiesPage
 
 
 class ResourceGetCompletedEvent(ResponseEvent):
-    type: Literal["resource.get.completed"] = "resource.get.completed"
+    type: Literal["resource.get.completed"] = EventType.RESOURCE_GET_COMPLETED
     result: ResourceInfo
 
 
 class DiagnosticsCompletedEvent(ResponseEvent):
-    type: Literal["diagnostics.completed"] = "diagnostics.completed"
+    type: Literal["diagnostics.completed"] = EventType.DIAGNOSTICS_COMPLETED
     result: Diagnostics
 
 
 class CommandCompletedEvent(ResponseEvent):
-    type: Literal["command.completed"] = "command.completed"
+    type: Literal["command.completed"] = EventType.COMMAND_COMPLETED
     result: dict[str, Any]
 
 
 class CommandAcceptedEvent(ResponseEvent):
-    type: Literal["command.accepted"] = "command.accepted"
+    type: Literal["command.accepted"] = EventType.COMMAND_ACCEPTED
     job: JobStatus
 
 
 class JobCompletedEvent(ResponseEvent):
-    type: Literal["job.completed"] = "job.completed"
+    type: Literal["job.completed"] = EventType.JOB_COMPLETED
     job: JobStatus
 
 
 class JobFailedEvent(ResponseEvent):
-    type: Literal["job.failed"] = "job.failed"
+    type: Literal["job.failed"] = EventType.JOB_FAILED
     job: JobStatus
     error: DeviceError
 
 
 class JobCancelledEvent(ResponseEvent):
-    type: Literal["job.cancelled"] = "job.cancelled"
+    type: Literal["job.cancelled"] = EventType.JOB_CANCELLED
     job: JobStatus
 
 
 class CommandFailedEvent(ResponseEvent):
-    type: Literal["command.failed"] = "command.failed"
+    type: Literal["command.failed"] = EventType.COMMAND_FAILED
     error: DeviceError
     job_id: int | None = None
     job: JobStatus | None = None
@@ -95,50 +96,50 @@ class Notification(Model):
 
 
 class JobFinishedEvent(Notification):
-    type: Literal["job.finished"] = "job.finished"
+    type: Literal["job.finished"] = EventType.JOB_FINISHED
 
 
 class StateChangedEvent(Notification):
-    type: Literal["state.changed"] = "state.changed"
+    type: Literal["state.changed"] = EventType.STATE_CHANGED
 
 
 class DataAvailableEvent(Notification):
-    type: Literal["data.available"] = "data.available"
+    type: Literal["data.available"] = EventType.DATA_AVAILABLE
 
 
 class ProtocolErrorEvent(Model):
-    type: Literal["protocol.error"] = "protocol.error"
+    type: Literal["protocol.error"] = EventType.PROTOCOL_ERROR
     message: str
 
 
 class UnknownEvent(Model):
-    type: Literal["unknown"] = "unknown"
+    type: Literal["unknown"] = EventType.UNKNOWN
     raw: dict[str, Any]
 
 
 class ConnectionClosedEvent(Model):
-    type: Literal["connection.closed"] = "connection.closed"
+    type: Literal["connection.closed"] = EventType.CONNECTION_CLOSED
     error: DeviceError | None = None
 
 
 class DiscoveryCompletedEvent(ResponseEvent):
-    type: Literal["discovery.completed"] = "discovery.completed"
+    type: Literal["discovery.completed"] = EventType.DISCOVERY_COMPLETED
     result: DeviceDiscovery
 
 
 class StateSnapshotCompletedEvent(ResponseEvent):
-    type: Literal["state.snapshot.completed"] = "state.snapshot.completed"
+    type: Literal["state.snapshot.completed"] = EventType.STATE_SNAPSHOT_COMPLETED
     result: StateSnapshot
 
 
 class RpcErrorEvent(Model):
-    type: Literal["rpc.error"] = "rpc.error"
+    type: Literal["rpc.error"] = EventType.RPC_ERROR
     wire_id: str | int | float | None
     error: DeviceError
 
 
 class NotificationGapEvent(Model):
-    type: Literal["notifications.gap"] = "notifications.gap"
+    type: Literal["notifications.gap"] = EventType.NOTIFICATIONS_GAP
     boot_id: str
     session: str
     expected: int

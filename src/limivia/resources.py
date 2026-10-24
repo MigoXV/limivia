@@ -1,8 +1,9 @@
-"""同步/异步复用的v3命令门面；方法只提交并返回请求ID。"""
+"""v3 参数门面；raw 执行器返回请求 ID，业务执行器等待确认后返回结果。"""
 
 from collections.abc import Callable
 from typing import Any, Literal
 
+from .constants import OperationName
 from .types.commands import ClientEvent, ClientEventParam
 from .types.models import ResourceKind
 
@@ -14,7 +15,7 @@ class Resource[T]:
 
 class SessionResource[T](Resource[T]):
     def ping(self) -> T:
-        return self._send({"type": "session.ping", "params": {}})
+        return self._send({"type": OperationName.SESSION_PING, "params": {}})
 
 
 class EventsResource[T](Resource[T]):
@@ -28,23 +29,23 @@ class EventsResource[T](Resource[T]):
         params["topics"] = topics
         if interval_ms is not None:
             params["interval_ms"] = interval_ms
-        return self._send({"type": "event.subscribe", "params": params})
+        return self._send({"type": OperationName.EVENT_SUBSCRIBE, "params": params})
 
     def unsubscribe(self) -> T:
-        return self._send({"type": "event.unsubscribe", "params": {}})
+        return self._send({"type": OperationName.EVENT_UNSUBSCRIBE, "params": {}})
 
 
 class ControlResource[T](Resource[T]):
     def acquire(self) -> T:
-        return self._send({"type": "control.acquire", "params": {}})
+        return self._send({"type": OperationName.CONTROL_ACQUIRE, "params": {}})
 
     def release(self) -> T:
-        return self._send({"type": "control.release", "params": {}})
+        return self._send({"type": OperationName.CONTROL_RELEASE, "params": {}})
 
 
 class OutputsResource[T](Resource[T]):
     def stop(self) -> T:
-        return self._send({"type": "outputs.stop", "params": {}})
+        return self._send({"type": OperationName.OUTPUTS_STOP, "params": {}})
 
 
 class CapabilitiesResource[T](Resource[T]):
@@ -52,7 +53,7 @@ class CapabilitiesResource[T](Resource[T]):
         params: dict[str, Any] = {}
         if page is not None:
             params["page"] = page
-        return self._send({"type": "capabilities", "params": params})
+        return self._send({"type": OperationName.CAPABILITIES, "params": params})
 
 
 class StateResource[T](Resource[T]):
@@ -75,12 +76,12 @@ class StateResource[T](Resource[T]):
             params["page"] = page
         if revision is not None:
             params["revision"] = revision
-        return self._send({"type": "state", "params": params})
+        return self._send({"type": OperationName.STATE, "params": params})
 
 
 class DiagnosticsResource[T](Resource[T]):
     def retrieve(self) -> T:
-        return self._send({"type": "diagnostics", "params": {}})
+        return self._send({"type": OperationName.DIAGNOSTICS, "params": {}})
 
 
 class MuxResource[T](Resource[T]):
@@ -90,7 +91,7 @@ class MuxResource[T](Resource[T]):
             params["page"] = page
         if revision is not None:
             params["revision"] = revision
-        return self._send({"type": "mux.query", "params": params})
+        return self._send({"type": OperationName.MUX_QUERY, "params": params})
 
     def preflight(
         self,
@@ -109,7 +110,7 @@ class MuxResource[T](Resource[T]):
             params["parent"] = parent
         if controller is not None:
             params["controller"] = controller
-        return self._send({"type": "mux.preflight", "params": params})
+        return self._send({"type": OperationName.MUX_PREFLIGHT, "params": params})
 
 
 class ResourceResource[T](Resource[T]):
@@ -130,7 +131,7 @@ class ResourceResource[T](Resource[T]):
             params["parent"] = parent
         if controller is not None:
             params["controller"] = controller
-        return self._send({"type": "resource.preflight", "params": params})
+        return self._send({"type": OperationName.RESOURCE_PREFLIGHT, "params": params})
 
     def open(
         self,
@@ -149,57 +150,57 @@ class ResourceResource[T](Resource[T]):
             params["parent"] = parent
         if controller is not None:
             params["controller"] = controller
-        return self._send({"type": "resource.open", "params": params})
+        return self._send({"type": OperationName.RESOURCE_OPEN, "params": params})
 
     def get(self, *, resource: int) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
-        return self._send({"type": "resource.get", "params": params})
+        return self._send({"type": OperationName.RESOURCE_GET, "params": params})
 
     def close(self, *, resource: int, cascade: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
         if cascade is not None:
             params["cascade"] = cascade
-        return self._send({"type": "resource.close", "params": params})
+        return self._send({"type": OperationName.RESOURCE_CLOSE, "params": params})
 
     def recover(self, *, resource: int, cascade: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
         if cascade is not None:
             params["cascade"] = cascade
-        return self._send({"type": "resource.recover", "params": params})
+        return self._send({"type": OperationName.RESOURCE_RECOVER, "params": params})
 
     def call(self, *, resource: int, action: str, args: dict[str, Any]) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
         params["action"] = action
         params["args"] = args
-        return self._send({"type": "resource.call", "params": params})
+        return self._send({"type": OperationName.RESOURCE_CALL, "params": params})
 
 
 class JobResource[T](Resource[T]):
     def get(self, *, job_id: int) -> T:
         params: dict[str, Any] = {}
         params["job_id"] = job_id
-        return self._send({"type": "job.get", "params": params})
+        return self._send({"type": OperationName.JOB_GET, "params": params})
 
     def cancel(self, *, job_id: int) -> T:
         params: dict[str, Any] = {}
         params["job_id"] = job_id
-        return self._send({"type": "job.cancel", "params": params})
+        return self._send({"type": OperationName.JOB_CANCEL, "params": params})
 
 
 class GpioResource[T](Resource[T]):
     def group_read(self, *, resources: list[int]) -> T:
         params: dict[str, Any] = {}
         params["resources"] = [{"resource": resource} for resource in resources]
-        return self._send({"type": "gpio.group.read", "params": params})
+        return self._send({"type": OperationName.GPIO_GROUP_READ, "params": params})
 
     def group_write(self, *, resources: list[dict[str, Any]]) -> T:
         params: dict[str, Any] = {}
         params["resources"] = resources
-        return self._send({"type": "gpio.group.write", "params": params})
+        return self._send({"type": OperationName.GPIO_GROUP_WRITE, "params": params})
 
 
 class RmtResource[T](Resource[T]):
@@ -208,49 +209,49 @@ class RmtResource[T](Resource[T]):
         params["resources"] = resources
         if timeout_ms is not None:
             params["timeout_ms"] = timeout_ms
-        return self._send({"type": "rmt.sync", "params": params})
+        return self._send({"type": OperationName.RMT_SYNC, "params": params})
 
 
 class BufferResource[T](Resource[T]):
     def create(self, *, size: int) -> T:
         params: dict[str, Any] = {}
         params["size"] = size
-        return self._send({"type": "buffer.create", "params": params})
+        return self._send({"type": OperationName.BUFFER_CREATE, "params": params})
 
     def write(self, *, buffer_id: int, offset: int, data: str | bytes) -> T:
         params: dict[str, Any] = {}
         params["buffer_id"] = buffer_id
         params["offset"] = offset
         params["data"] = data
-        return self._send({"type": "buffer.write", "params": params})
+        return self._send({"type": OperationName.BUFFER_WRITE, "params": params})
 
     def read(self, *, buffer_id: int, offset: int, length: int) -> T:
         params: dict[str, Any] = {}
         params["buffer_id"] = buffer_id
         params["offset"] = offset
         params["length"] = length
-        return self._send({"type": "buffer.read", "params": params})
+        return self._send({"type": OperationName.BUFFER_READ, "params": params})
 
     def delete(self, *, buffer_id: int) -> T:
         params: dict[str, Any] = {}
         params["buffer_id"] = buffer_id
-        return self._send({"type": "buffer.delete", "params": params})
+        return self._send({"type": OperationName.BUFFER_DELETE, "params": params})
 
 
 class StorageResource[T](Resource[T]):
     def status(self) -> T:
-        return self._send({"type": "storage.status", "params": {}})
+        return self._send({"type": OperationName.STORAGE_STATUS, "params": {}})
 
     def list(self, *, page: int | None = None) -> T:
         params: dict[str, Any] = {}
         if page is not None:
             params["page"] = page
-        return self._send({"type": "storage.list", "params": params})
+        return self._send({"type": OperationName.STORAGE_LIST, "params": params})
 
     def format(self, *, confirm: str) -> T:
         params: dict[str, Any] = {}
         params["confirm"] = confirm
-        return self._send({"type": "storage.format", "params": params})
+        return self._send({"type": OperationName.STORAGE_FORMAT, "params": params})
 
     def begin(self, *, name: str, size: int, sha256: str, secret: bool | None = None) -> T:
         params: dict[str, Any] = {}
@@ -259,56 +260,56 @@ class StorageResource[T](Resource[T]):
         params["sha256"] = sha256
         if secret is not None:
             params["secret"] = secret
-        return self._send({"type": "storage.begin", "params": params})
+        return self._send({"type": OperationName.STORAGE_BEGIN, "params": params})
 
     def chunk(self, *, upload_id: int, offset: int, data: str | bytes) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
         params["offset"] = offset
         params["data"] = data
-        return self._send({"type": "storage.chunk", "params": params})
+        return self._send({"type": OperationName.STORAGE_CHUNK, "params": params})
 
     def commit(self, *, upload_id: int) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
-        return self._send({"type": "storage.commit", "params": params})
+        return self._send({"type": OperationName.STORAGE_COMMIT, "params": params})
 
     def abort(self, *, upload_id: int) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
-        return self._send({"type": "storage.abort", "params": params})
+        return self._send({"type": OperationName.STORAGE_ABORT, "params": params})
 
     def read(self, *, name: str, offset: int, length: int) -> T:
         params: dict[str, Any] = {}
         params["name"] = name
         params["offset"] = offset
         params["length"] = length
-        return self._send({"type": "storage.read", "params": params})
+        return self._send({"type": OperationName.STORAGE_READ, "params": params})
 
     def delete(self, *, name: str, secret: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["name"] = name
         if secret is not None:
             params["secret"] = secret
-        return self._send({"type": "storage.delete", "params": params})
+        return self._send({"type": OperationName.STORAGE_DELETE, "params": params})
 
     def record(self, *, name: str, value: Any) -> T:
         params: dict[str, Any] = {}
         params["name"] = name
         params["value"] = value
-        return self._send({"type": "storage.record", "params": params})
+        return self._send({"type": OperationName.STORAGE_RECORD, "params": params})
 
     def append(self, *, name: str, value: Any, limit_bytes: int) -> T:
         params: dict[str, Any] = {}
         params["name"] = name
         params["value"] = value
         params["limit_bytes"] = limit_bytes
-        return self._send({"type": "storage.append", "params": params})
+        return self._send({"type": OperationName.STORAGE_APPEND, "params": params})
 
 
 class OtaResource[T](Resource[T]):
     def status(self) -> T:
-        return self._send({"type": "ota.status", "params": {}})
+        return self._send({"type": OperationName.OTA_STATUS, "params": {}})
 
     def begin(self, *, board: str, protocol: int, profile: str, size: int, sha256: str) -> T:
         params: dict[str, Any] = {}
@@ -317,31 +318,31 @@ class OtaResource[T](Resource[T]):
         params["profile"] = profile
         params["size"] = size
         params["sha256"] = sha256
-        return self._send({"type": "ota.begin", "params": params})
+        return self._send({"type": OperationName.OTA_BEGIN, "params": params})
 
     def chunk(self, *, upload_id: int, offset: int, data: str | bytes) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
         params["offset"] = offset
         params["data"] = data
-        return self._send({"type": "ota.chunk", "params": params})
+        return self._send({"type": OperationName.OTA_CHUNK, "params": params})
 
     def commit(self, *, upload_id: int, reboot: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
         if reboot is not None:
             params["reboot"] = reboot
-        return self._send({"type": "ota.commit", "params": params})
+        return self._send({"type": OperationName.OTA_COMMIT, "params": params})
 
     def abort(self, *, upload_id: int) -> T:
         params: dict[str, Any] = {}
         params["upload_id"] = upload_id
-        return self._send({"type": "ota.abort", "params": params})
+        return self._send({"type": OperationName.OTA_ABORT, "params": params})
 
 
 class WifiResource[T](Resource[T]):
     def status(self) -> T:
-        return self._send({"type": "wifi.status", "params": {}})
+        return self._send({"type": OperationName.WIFI_STATUS, "params": {}})
 
     def configure(self, *, ssid: str, password: str, persist: bool | None = None) -> T:
         params: dict[str, Any] = {}
@@ -349,23 +350,23 @@ class WifiResource[T](Resource[T]):
         params["password"] = password
         if persist is not None:
             params["persist"] = persist
-        return self._send({"type": "wifi.configure", "params": params})
+        return self._send({"type": OperationName.WIFI_CONFIGURE, "params": params})
 
     def scan(self) -> T:
-        return self._send({"type": "wifi.scan", "params": {}})
+        return self._send({"type": OperationName.WIFI_SCAN, "params": {}})
 
     def maintenance(self, *, enable: bool) -> T:
         params: dict[str, Any] = {}
         params["enable"] = enable
-        return self._send({"type": "wifi.maintenance", "params": params})
+        return self._send({"type": OperationName.WIFI_MAINTENANCE, "params": params})
 
     def disconnect(self) -> T:
-        return self._send({"type": "wifi.disconnect", "params": {}})
+        return self._send({"type": OperationName.WIFI_DISCONNECT, "params": {}})
 
 
 class MqttResource[T](Resource[T]):
     def status(self) -> T:
-        return self._send({"type": "mqtt.status", "params": {}})
+        return self._send({"type": OperationName.MQTT_STATUS, "params": {}})
 
     def configure(
         self,
@@ -410,7 +411,7 @@ class MqttResource[T](Resource[T]):
             params["will_retain"] = will_retain
         if persist is not None:
             params["persist"] = persist
-        return self._send({"type": "mqtt.configure", "params": params})
+        return self._send({"type": OperationName.MQTT_CONFIGURE, "params": params})
 
     def publish(
         self,
@@ -434,39 +435,39 @@ class MqttResource[T](Resource[T]):
             params["qos"] = qos
         if retain is not None:
             params["retain"] = retain
-        return self._send({"type": "mqtt.publish", "params": params})
+        return self._send({"type": OperationName.MQTT_PUBLISH, "params": params})
 
     def subscribe(self, *, topic: str, qos: int | None = None) -> T:
         params: dict[str, Any] = {}
         params["topic"] = topic
         if qos is not None:
             params["qos"] = qos
-        return self._send({"type": "mqtt.subscribe", "params": params})
+        return self._send({"type": OperationName.MQTT_SUBSCRIBE, "params": params})
 
     def unsubscribe(self, *, topic: str) -> T:
         params: dict[str, Any] = {}
         params["topic"] = topic
-        return self._send({"type": "mqtt.unsubscribe", "params": params})
+        return self._send({"type": OperationName.MQTT_UNSUBSCRIBE, "params": params})
 
     def receive(self) -> T:
-        return self._send({"type": "mqtt.receive", "params": {}})
+        return self._send({"type": OperationName.MQTT_RECEIVE, "params": {}})
 
     def stop(self) -> T:
-        return self._send({"type": "mqtt.stop", "params": {}})
+        return self._send({"type": OperationName.MQTT_STOP, "params": {}})
 
 
 class EspnowResource[T](Resource[T]):
     def status(self) -> T:
-        return self._send({"type": "espnow.status", "params": {}})
+        return self._send({"type": OperationName.ESPNOW_STATUS, "params": {}})
 
     def start(self, *, pmk: str | bytes | None = None) -> T:
         params: dict[str, Any] = {}
         if pmk is not None:
             params["pmk"] = pmk
-        return self._send({"type": "espnow.start", "params": params})
+        return self._send({"type": OperationName.ESPNOW_START, "params": params})
 
     def stop(self) -> T:
-        return self._send({"type": "espnow.stop", "params": {}})
+        return self._send({"type": OperationName.ESPNOW_STOP, "params": {}})
 
     def peer(self, *, mac: str, encrypt: bool | None = None, key: str | bytes | None = None) -> T:
         params: dict[str, Any] = {}
@@ -475,12 +476,12 @@ class EspnowResource[T](Resource[T]):
             params["encrypt"] = encrypt
         if key is not None:
             params["key"] = key
-        return self._send({"type": "espnow.peer", "params": params})
+        return self._send({"type": OperationName.ESPNOW_PEER, "params": params})
 
     def remove(self, *, mac: str) -> T:
         params: dict[str, Any] = {}
         params["mac"] = mac
-        return self._send({"type": "espnow.remove", "params": params})
+        return self._send({"type": OperationName.ESPNOW_REMOVE, "params": params})
 
     def send(
         self,
@@ -498,27 +499,30 @@ class EspnowResource[T](Resource[T]):
             params["buffer_id"] = buffer_id
         if timeout_ms is not None:
             params["timeout_ms"] = timeout_ms
-        return self._send({"type": "espnow.send", "params": params})
+        return self._send({"type": OperationName.ESPNOW_SEND, "params": params})
 
     def receive(self) -> T:
-        return self._send({"type": "espnow.receive", "params": {}})
+        return self._send({"type": OperationName.ESPNOW_RECEIVE, "params": {}})
 
 
 class PowerResource[T](Resource[T]):
     def configure(
-        self, *, auto_light_sleep: bool | None = None, modem_sleep: str | None = None
+        self,
+        *,
+        auto_light_sleep: bool | None = None,
+        modem_sleep: Literal["none", "min", "max"] | None = None,
     ) -> T:
         params: dict[str, Any] = {}
         if auto_light_sleep is not None:
             params["auto_light_sleep"] = auto_light_sleep
         if modem_sleep is not None:
             params["modem_sleep"] = modem_sleep
-        return self._send({"type": "power.configure", "params": params})
+        return self._send({"type": OperationName.POWER_CONFIGURE, "params": params})
 
     def sleep(
         self,
         *,
-        mode: str,
+        mode: Literal["light", "deep"],
         duration_ms: int,
         wake_pin: int | None = None,
         wake_level: int | None = None,
@@ -530,63 +534,63 @@ class PowerResource[T](Resource[T]):
             params["wake_pin"] = wake_pin
         if wake_level is not None:
             params["wake_level"] = wake_level
-        return self._send({"type": "power.sleep", "params": params})
+        return self._send({"type": OperationName.POWER_SLEEP, "params": params})
 
 
 class SystemResource[T](Resource[T]):
     def info(self) -> T:
-        return self._send({"type": "system.info", "params": {}})
+        return self._send({"type": OperationName.SYSTEM_INFO, "params": {}})
 
     def time(self) -> T:
-        return self._send({"type": "system.time", "params": {}})
+        return self._send({"type": OperationName.SYSTEM_TIME, "params": {}})
 
     def restart(self) -> T:
-        return self._send({"type": "system.restart", "params": {}})
+        return self._send({"type": OperationName.SYSTEM_RESTART, "params": {}})
 
     def nvs_format(self, *, confirm: str) -> T:
         params: dict[str, Any] = {}
         params["confirm"] = confirm
-        return self._send({"type": "system.nvs_format", "params": params})
+        return self._send({"type": OperationName.SYSTEM_NVS_FORMAT, "params": params})
 
 
 class FlowResource[T](Resource[T]):
     def load(self, *, name: str) -> T:
         params: dict[str, Any] = {}
         params["name"] = name
-        return self._send({"type": "flow.load", "params": params})
+        return self._send({"type": OperationName.FLOW_LOAD, "params": params})
 
     def list(self) -> T:
-        return self._send({"type": "flow.list", "params": {}})
+        return self._send({"type": OperationName.FLOW_LIST, "params": {}})
 
     def get(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.get", "params": params})
+        return self._send({"type": OperationName.FLOW_GET, "params": params})
 
     def start(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.start", "params": params})
+        return self._send({"type": OperationName.FLOW_START, "params": params})
 
     def pause(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.pause", "params": params})
+        return self._send({"type": OperationName.FLOW_PAUSE, "params": params})
 
     def resume(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.resume", "params": params})
+        return self._send({"type": OperationName.FLOW_RESUME, "params": params})
 
     def stop(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.stop", "params": params})
+        return self._send({"type": OperationName.FLOW_STOP, "params": params})
 
     def remove(self, *, flow_id: int) -> T:
         params: dict[str, Any] = {}
         params["flow_id"] = flow_id
-        return self._send({"type": "flow.remove", "params": params})
+        return self._send({"type": OperationName.FLOW_REMOVE, "params": params})
 
 
 class Resources[T]:

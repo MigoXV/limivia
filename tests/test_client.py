@@ -16,7 +16,7 @@ async def connect_test(case, **kwargs):
     backend = FakeBackend()
     async with AsyncLimivia(backend=backend, job_poll_interval=0.01, **kwargs) as client:
         async with client.devices.connect(kind="usb", target="test") as connection:
-            await case(connection, backend.connection)
+            await case(connection.raw, backend.connection)
     assert backend.connection.closed
 
 
@@ -92,7 +92,7 @@ def test_stop_bypasses_eight_jobs_and_revokes_control():
             await c.system.time()
         stop = await c.outputs.stop()
         ack = await result(c, stop, accepted=True)
-        assert ack.type == "command.accepted" and c._control is None
+        assert ack.type == "command.accepted" and c._core._control is None
         t.hold_jobs = False
         assert (await result(c, stop)).type == "job.completed"
         assert ids
@@ -181,17 +181,19 @@ def test_old_session_notifications_and_duplicate_responses_are_ignored():
     run(connect_test(case))
 
 
-def test_event_overflow_preserves_terminal_failure_and_closes():
+def test_raw_overflow_is_explicit_and_does_not_close_business_connection():
+    from limivia import SubscriptionOverflowError
     async def case():
         backend = FakeBackend()
         async with AsyncLimivia(backend=backend, event_queue_size=1) as client:
-            async with client.devices.connect(kind="usb", target="test") as c:
-                request = await c.state.retrieve()
+            async with client.devices.connect(kind="usb", target="test") as board:
+                raw = board.raw
+                await raw.state.retrieve()
                 await asyncio.sleep(0.03)
-                events = [e async for e in c]
-                assert any(getattr(e, "request_id", None) == request for e in events)
-                assert events[-1].type == "connection.closed"
-
+                with pytest.raises(SubscriptionOverflowError):
+                    await raw.recv()
+                assert (await board.state.retrieve()).page == 0
+                assert not board._core._closed
     run(case())
 
 
@@ -244,6 +246,7 @@ def test_sync_facade_uses_one_continuous_loop_and_thread_exits():
     before = {t.ident for t in threading.enumerate()}
     with Limivia(backend=backend, job_poll_interval=0.01) as client:
         with client.devices.connect(kind="usb", target="test") as c:
+            c = c.raw
             rid = c.system.time()
             for event in c:
                 if getattr(event, "request_id", None) == rid and event.type == "job.completed":
@@ -304,7 +307,7 @@ def test_device_control_required_clears_stale_local_token():
         event = await result(
             c, await c.resource.call(resource=1, action="write", args={"data": b"a"})
         )
-        assert event.type == "command.failed" and c._control is None
+        assert event.type == "command.failed" and c._core._control is None
 
     run(connect_test(case))
 
@@ -326,10 +329,10 @@ def test_client_rejects_unbounded_or_mistyped_limits(kwargs):
 def test_internal_heartbeat_renews_without_public_ping_results():
     async def case(c, t):
         await c.recv()
-        c._heartbeat_interval = 0.01
+        c._core._heartbeat_interval = 0.01
         await asyncio.sleep(0.05)
         assert any(x["op"] == "session.ping" for x in t.commands)
-        assert not c._events
+        assert not c._core._events
         ids = [x["id"] for x in t.commands]
         assert ids == sorted(set(ids))
 
@@ -339,7 +342,7 @@ def test_internal_heartbeat_renews_without_public_ping_results():
 def test_heartbeat_failure_terminates_without_retry_or_public_ping_result():
     async def case(c, t):
         await c.recv()
-        c._heartbeat_interval = 0.01
+        c._core._heartbeat_interval = 0.01
         t.silent_op = "session.ping"
         await asyncio.sleep(0.06)
         events = [e async for e in c]
@@ -357,7 +360,7 @@ def test_public_job_get_describes_existing_job_without_recursive_tracking():
         event = await result(c, await c.job.get(job_id=99))
         assert event.type == "command.completed" and event.result["state"] == "accepted"
         await asyncio.sleep(0.02)
-        assert not c._jobs and sum(x["op"] == "job.get" for x in t.commands) == 1
+        assert not c._core._jobs and sum(x["op"] == "job.get" for x in t.commands) == 1
 
     run(connect_test(case))
 

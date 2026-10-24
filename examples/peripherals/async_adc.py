@@ -1,57 +1,22 @@
 import asyncio
-import base64
-import struct
-from typing import Annotated
 
-import typer
+from limivia import AsyncLimivia, Pins, TransportKind
 
-from .._common import (
-    Kind,
-    KindOption,
-    PinOption,
-    TargetOption,
-    await_result,
-    connect_async,
-    execute,
-    resource_async,
-)
+from .._common import run
 
 
-async def run(kind: Kind, target: str | None, pin: int, samples: int, interval_ms: int):
-    async with (
-        connect_async(kind, target, control=True) as c,
-        resource_async(c, "adc", {"pin": pin}, {"interval_ms": interval_ms}) as resource,
-    ):
-        count = 0
-        async with asyncio.timeout(max(10, samples * interval_ms / 1000 * 3)):
-            while count < samples:
-                packet = await await_result(
-                    c, await c.resource.call(resource=resource, action="events", args={})
-                )
-                for event in packet["events"]:
-                    raw, mv = struct.unpack("<ii", base64.b64decode(event["data"], validate=True))
-                    print(
-                        {
-                            "raw": raw,
-                            "millivolts": None if mv < 0 else mv,
-                            "sequence": event["sequence"],
-                        }
-                    )
-                    count += 1
-                    if count == samples:
-                        break
-                await asyncio.sleep(interval_ms / 1000)
-
-
-def main(
-    kind: KindOption = Kind.usb,
-    target: TargetOption = None,
-    pin: PinOption = 0,
-    samples: Annotated[int, typer.Option(min=1)] = 3,
-    interval_ms: Annotated[int, typer.Option(min=10)] = 100,
-):
-    asyncio.run(run(kind, target, pin, samples, interval_ms))
+async def main():
+    """每 100ms 采样 GPIO0，读取三条 SDK 已解码的 ADC 记录。"""
+    async with AsyncLimivia.connect(kind=TransportKind.USB) as board:
+        async with board.adc.open(Pins.GPIO0, interval_ms=100) as adc:
+            remaining = 3
+            async with asyncio.timeout(10):
+                while remaining:
+                    for sample in (await adc.events())[:remaining]:
+                        print(sample.to_json())
+                        remaining -= 1
+                    await asyncio.sleep(0.1)
 
 
 if __name__ == "__main__":
-    execute(main)()
+    run(main)

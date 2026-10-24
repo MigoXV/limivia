@@ -1,13 +1,13 @@
-"""识别当前镜像并读取全部能力；不申请控制或停止设备。"""
+from limivia import Limivia, TransportKind
 
-from .._common import Kind, KindOption, TargetOption, connect_sync, execute, wait
+from .._common import run
 
 
-def main(kind: KindOption = Kind.usb, target: TargetOption = None):
-    with connect_sync(kind, target) as connection:
-        discovered = wait(connection, connection.discover())
-        print(discovered.to_json())
+def main():
+    """读取唯一 USB 板卡的完整能力，不申请控制或停止设备。"""
+    with Limivia.connect(kind=TransportKind.USB) as board:
+        print(board.discover().to_json())
 
 
 if __name__ == "__main__":
-    execute(main)()
+    run(main)

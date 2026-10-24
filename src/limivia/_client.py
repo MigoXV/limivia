@@ -8,8 +8,11 @@ from typing import Protocol, Self
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 
+from ._board import AsyncBoard, AsyncRaw
 from ._connection import AsyncConnection
-from ._exceptions import DeviceConnectionError
+from ._exceptions import DeviceConnectionError, DeviceSelectionError
+from ._sync import Connection, RawEventStream
+from .constants import TransportKind
 from .resources import Resources
 from .transports import DeviceBackend, Transport
 from .types import (
@@ -35,10 +38,10 @@ class AsyncDevices:
     def __init__(self, client: AsyncLimivia):
         self._client = client
 
-    async def list(self, *, kind: LinkKind = "ble") -> list[DeviceInfo]:
+    async def list(self, *, kind: LinkKind = TransportKind.BLE) -> list[DeviceInfo]:
         client = self._client
         client._check()
-        if kind not in ("ble", "usb"):
+        if kind not in (TransportKind.BLE, TransportKind.USB):
             raise ValueError("kind 必须为 ble 或 usb。")
         if client._active is not None or client._scanning:
             raise DeviceConnectionError("正在连接设备或搜索设备，请先断开或等待搜索结束。")
@@ -52,8 +55,8 @@ class AsyncDevices:
     def connect(
         self,
         *,
-        kind: LinkKind = "ble",
-        target: str,
+        kind: LinkKind = TransportKind.BLE,
+        target: str | None = None,
         options: ConnectionOptions | None = None,
         expected_device_id: str | None = None,
     ) -> AsyncConnectionManager:
@@ -65,7 +68,7 @@ class AsyncConnectionManager:
         self,
         client: AsyncLimivia,
         kind: LinkKind,
-        target: str,
+        target: str | None,
         options: ConnectionOptions | None,
         expected_device_id: str | None,
     ):
@@ -74,18 +77,39 @@ class AsyncConnectionManager:
         self._target = target
         self._options = options
         self._expected = expected_device_id
-        self._connection: AsyncConnection | None = None
+        self._connection: AsyncBoard | None = None
         self._entered = False
+        self._owned_client = False
 
-    async def __aenter__(self) -> AsyncConnection:
+    async def __aenter__(self) -> AsyncBoard:
+        try:
+            return await self._enter()
+        except BaseException:
+            if self._owned_client:
+                await self._client.close()
+            raise
+
+    async def _enter(self) -> AsyncBoard:
         client = self._client
         client._check()
         if self._entered:
             raise DeviceConnectionError("连接上下文不能重复使用。")
         self._entered = True
-        if self._kind not in ("ble", "usb", "ws", "mqtt"):
+        if self._kind not in (
+            TransportKind.BLE,
+            TransportKind.USB,
+            TransportKind.WS,
+            TransportKind.MQTT,
+        ):
             raise ValueError("kind 必须为 ble/usb/ws/mqtt")
-        if self._kind == "mqtt":
+        if self._target is None:
+            if self._kind not in (TransportKind.USB, TransportKind.BLE):
+                raise ValueError("网络连接需要明确 target URL")
+            candidates = await client.devices.list(kind=self._kind)
+            if len(candidates) != 1:
+                raise DeviceSelectionError(f"发现 {len(candidates)} 台候选设备，请明确指定 target")
+            self._target = candidates[0].id
+        if self._kind == TransportKind.MQTT:
             if not isinstance(self._options, MQTTOptions):
                 raise ValueError("MQTT连接需要MQTTOptions/device_id")
             if self._expected and self._expected.lower() != self._options.device_id:
@@ -102,7 +126,6 @@ class AsyncConnectionManager:
             job_poll_interval=client.job_poll_interval,
             expected_device_id=self._expected,
         )
-        self._connection = connection
         client._active = connection
         client._opening = asyncio.current_task()
         try:
@@ -112,15 +135,21 @@ class AsyncConnectionManager:
             raise
         finally:
             client._opening = None
-        return connection
+        self._connection = AsyncBoard(connection)
+        client._board = self._connection
+        return self._connection
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            finally:
-                if self._client._active is self._connection:
+        try:
+            if self._connection is not None:
+                try:
+                    await self._connection._exit(exc)
+                finally:
                     self._client._active = None
+                    self._client._board = None
+        finally:
+            if self._owned_client:
+                await self._client.close()
 
 
 class AsyncLimivia:
@@ -151,11 +180,29 @@ class AsyncLimivia:
         self.job_poll_interval = job_poll_interval
         self._backend = backend if backend is not None else DeviceBackend()
         self._active: AsyncConnection | None = None
+        self._board: AsyncBoard | None = None
         self._scanning: asyncio.Task | None = None
         self._opening: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
         self.devices = AsyncDevices(self)
+
+    @classmethod
+    def connect(
+        cls,
+        *,
+        kind: LinkKind = TransportKind.USB,
+        target: str | None = None,
+        options: ConnectionOptions | None = None,
+        expected_device_id: str | None = None,
+        **client_options,
+    ) -> AsyncConnectionManager:
+        client = cls(**client_options)
+        manager = client.devices.connect(
+            kind=kind, target=target, options=options, expected_device_id=expected_device_id
+        )
+        manager._owned_client = True
+        return manager
 
     def _check(self) -> None:
         if self._closed:
@@ -184,12 +231,18 @@ class AsyncLimivia:
             self._opening.cancel()
             await asyncio.gather(self._opening, return_exceptions=True)
         if self._active:
-            await self._active.close()
-            self._active = None
+            try:
+                if self._board:
+                    await self._board._exit(None)
+                else:
+                    await self._active.close()
+            finally:
+                self._active = None
+                self._board = None
 
 
-class Connection(Resources[int]):
-    def __init__(self, connection: AsyncConnection, portal: BlockingPortal):
+class RawConnection(Resources[int]):
+    def __init__(self, connection: AsyncRaw, portal: BlockingPortal):
         self._connection = connection
         self._portal = portal
         self.handshake_request_id = connection.handshake_request_id
@@ -213,6 +266,10 @@ class Connection(Resources[int]):
     def batch(self, commands: list[ClientEvent | ClientEventParam]) -> list[int]:
         return self._portal.call(self._connection.batch, commands)
 
+    def subscribe(self, *, queue_size: int | None = None) -> RawEventStream:
+        stream = self._portal.call(partial(self._connection.subscribe, queue_size=queue_size))
+        return RawEventStream(stream, self._portal)
+
     def recv(self) -> DeviceEvent:
         try:
             return self._portal.call(self._connection.recv)
@@ -234,7 +291,7 @@ class ConnectionManager:
         self,
         client: Limivia,
         kind: LinkKind,
-        target: str,
+        target: str | None,
         options: ConnectionOptions | None,
         expected_device_id: str | None,
     ):
@@ -245,38 +302,48 @@ class ConnectionManager:
         self._expected = expected_device_id
         self._manager: AsyncConnectionManager | None = None
         self._entered = False
+        self._owned_client = False
 
     def __enter__(self) -> Connection:
         if self._entered:
             raise DeviceConnectionError("连接上下文不能重复使用。")
         self._entered = True
-        portal, client = self._client._ensure()
-        self._manager = client.devices.connect(
-            kind=self._kind,
-            target=self._target,
-            options=self._options,
-            expected_device_id=self._expected,
-        )
-        return Connection(portal.call(self._manager.__aenter__), portal)
+        try:
+            portal, client = self._client._ensure()
+            self._manager = client.devices.connect(
+                kind=self._kind,
+                target=self._target,
+                options=self._options,
+                expected_device_id=self._expected,
+            )
+            return Connection(portal.call(self._manager.__aenter__), portal)
+        except BaseException:
+            if self._owned_client:
+                self._client.close()
+            raise
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if self._manager is not None and self._client._portal is not None:
-            self._client._portal.call(self._manager.__aexit__, exc_type, exc, tb)
+        try:
+            if self._manager is not None and self._client._portal is not None:
+                self._client._portal.call(self._manager.__aexit__, exc_type, exc, tb)
+        finally:
+            if self._owned_client:
+                self._client.close()
 
 
 class Devices:
     def __init__(self, client: Limivia):
         self._client = client
 
-    def list(self, *, kind: LinkKind = "ble") -> list[DeviceInfo]:
+    def list(self, *, kind: LinkKind = TransportKind.BLE) -> list[DeviceInfo]:
         portal, client = self._client._ensure()
         return portal.call(partial(client.devices.list, kind=kind))
 
     def connect(
         self,
         *,
-        kind: LinkKind = "ble",
-        target: str,
+        kind: LinkKind = TransportKind.BLE,
+        target: str | None = None,
         options: ConnectionOptions | None = None,
         expected_device_id: str | None = None,
     ) -> ConnectionManager:
@@ -310,6 +377,22 @@ class Limivia:
         self._client: AsyncLimivia | None = None
         self._closed = False
         self.devices = Devices(self)
+
+    @classmethod
+    def connect(
+        cls,
+        *,
+        kind: LinkKind = TransportKind.USB,
+        target: str | None = None,
+        options: ConnectionOptions | None = None,
+        expected_device_id: str | None = None,
+        **client_options,
+    ) -> ConnectionManager:
+        manager = ConnectionManager(
+            cls(**client_options), kind, target, options, expected_device_id
+        )
+        manager._owned_client = True
+        return manager
 
     def _ensure(self) -> tuple[BlockingPortal, AsyncLimivia]:
         if self._closed:

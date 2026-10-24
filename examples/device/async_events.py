@@ -1,31 +1,24 @@
 import asyncio
 
-from .._common import (
-    DurationOption,
-    Kind,
-    KindOption,
-    TargetOption,
-    await_result,
-    connect_async,
-    execute,
-)
+from limivia import AsyncLimivia, TransportKind
+from limivia.constants import NotificationTopic
+
+from .._common import run
 
 
-async def run(kind: Kind, target: str | None, duration: float):
-    async with connect_async(kind, target) as c:
-        await await_result(c, await c.events.subscribe(topics=["job", "resource", "flow", "data"]))
-        await c.state.retrieve()
-        try:
-            async with asyncio.timeout(duration):
-                async for event in c:
-                    print(event.to_json())
-        except TimeoutError:
-            pass
-
-
-def main(kind: KindOption = Kind.usb, target: TargetOption = None, duration: DurationOption = 2):
-    asyncio.run(run(kind, target, duration))
+async def main():
+    """订阅设备通知两秒；通知与业务等待独立分发。"""
+    async with AsyncLimivia.connect(kind=TransportKind.USB) as board:
+        async with board.notifications.subscribe(
+            topics=[NotificationTopic.JOB, NotificationTopic.RESOURCE, NotificationTopic.DATA]
+        ) as updates:
+            try:
+                async with asyncio.timeout(2):
+                    async for event in updates:
+                        print(event.to_json())
+            except TimeoutError:
+                pass
 
 
 if __name__ == "__main__":
-    execute(main)()
+    run(main)

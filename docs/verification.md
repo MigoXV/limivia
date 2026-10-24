@@ -1,4 +1,86 @@
-# JSON-RPC v3 / SDK 0.3.0a1 验证记录
+# SDK 本地构建与验证记录
+
+## 0.3.0a2 本地构建（feature/api）
+
+2026-10-25，版本提交 `1738814`。按用户要求将 pyproject.toml、导入 __version__ 及当前使用文档更新为 **0.3.0a2**；依赖、线协议与固件版本保持不变，历史 0.3.0a1 契约与验证记录保留。
+
+- 完整 `poetry run pytest -q`：743 项通过；Ruff、mypy（48个文件）、`poetry check --lock` 均通过。
+- `poetry build`：0.3.0a2 wheel / sdist 成功。wheel METADATA、sdist PKG-INFO、隔离导入 __version__ 和 importlib.metadata.version 均为 0.3.0a2。
+- wheel 内 SDK 源码与当前 src 逐字节一致，包含 constants.py 和 py.typed；sdist 含常量测试和最新示例。
+- 仓库外临时目录以 `python -I` 运行同步/异步命名常量 GPIO 流程，测试设备由 FakeBackend 注入，资源释放确认。
+- 仅本地构建和提交，没有发布、推送或实机验收。
+
+产物 SHA256：
+
+- `limivia-0.3.0a2-py3-none-any.whl`：`edde8adb7d3c2b3bf9099e4bedd0bdee4a0b3bacbe96a83d308b554dc36b189c`
+- `limivia-0.3.0a2.tar.gz`：`9a9396650d7568411e19df6c9b4209fb19568b3ff979be8fffcfcd8eee8f1587`
+
+## 命名常量统一（feature/api）
+
+2026-10-25，核心提交 `f609aa8`；示例与文档在后续独立提交。使用 Python3.12.3、Poetry 和项目内 .venv。依据固件 `f110c38ca370fe017fdf4c08e94632d2cbf52f84` 及冻结契约核对引脚与固定选项，没有修改固件或 server。
+
+- 新增 limivia.constants，运行时仍为原生 str/int；覆盖事件、操作、资源、动作、通知、状态、配置及板级标识。Literal discriminator 和原始输入保持兼容，未知错误原因与 profile 继续保留。
+- 完整 `poetry run pytest -q`：**743 项通过**；Ruff、mypy（48个文件）、`poetry check --lock` 均通过。命名 EventType 的所有21种分支均通过静态收窄检查。
+- 常量完整性对照独立 Literal 契约，检查76个 wire 操作、事件默认值、原生 JSON 编码、严格数字校验、板级别名及未知值保留；相关49项示例测试也通过。
+- `poetry build` 成功；wheel 内全部 SDK 源码与当前 src 逐字节一致，含 constants.py 和 py.typed。sdist 包含常量测试与无 sync_ 前缀的同步示例。
+- 仓库外临时目录、`python -I` 验证 wheel 的常量导入和同步/异步 GPIO 生命周期，设备由测试侧 FakeBackend 注入。
+- 本轮模拟设备与真实网络客户端 loopback 回归通过；没有实机、无线或外部 broker 互通验收，也未发布或推送。
+
+本轮本地产物 SHA256：
+
+- `limivia-0.3.0a1-py3-none-any.whl`：`9d13da43a59823d64fecfeb1aec52eaaedf2f032556652607d0c739f232e0df5`
+- `limivia-0.3.0a1.tar.gz`：`0d2de7fbb95b68961ab625d602148646bfc8f264a42d96cd2c82406e05773bbd`
+
+## 后续示例精简（feature/api）
+
+2026-10-25，示例与测试提交 `76a3f34`。普通示例改为直接调用 SDK，多传输 CLI 集中至 `examples.device.connect`；共享入口只处理帮助、日志与退出码。SDK 运行代码、依赖和版本未改动，示例仅增加允许嵌套生命周期上下文的 Ruff 配置。
+
+- `poetry run pytest -q tests/test_examples_cli.py tests/test_examples_sync.py tests/test_examples_async.py`：**49 项通过**。
+- `poetry run ruff check src tests examples`、`poetry run mypy`：通过，mypy 检查 47 个文件。
+- 模拟设备运行点灯、同步/异步闪烁、ADC、UART、PWM 和 timer 的实际入口，验证释放；周期 ADC 检查只输出三条已解码记录。高级上传失败后中止失败时保留原异常。
+- 各模块的导入和帮助在禁止访问设备的独立进程中检查；旧普通 CLI 参数在连接前拒绝。
+- 本轮没有构建、实机、网络 loopback 或外部服务测试；新版示例从仓库源码运行，以下构建摘要仍属于此前构建。
+
+## 此前业务接口重构
+
+日期：2026-10-25。当前开发分支 **dev**；开始审查时工作区干净。核对相邻固件检出 `f110c38ca370fe017fdf4c08e94632d2cbf52f84`，与冻结契约一致，未修改固件或 server。
+
+本轮仅对 SDK 做本地修改、提交与 build，没有发布、推送、读取发布令牌或操作实物。下方 2026-10-23 单板结果属于重构前版本，**不代表新业务 API 已通过硬件验收**。
+
+## 本轮源码与验证
+
+- 核心事件分发：`19b72d4`；业务接口、类型、示例和回归：`5737967`；传输清理错误边界：`48ae74b`。文档在后续独立提交。
+- 旧接口移至 `board.raw`，普通方法等待设备确认，GPIO/PWM/ADC/UART 及通用资源对象管理生命周期，独立通知订阅不抢读业务结果。
+- Python3.12.3、项目内 Poetry 环境；初始基线 691 项，最终 **722 项通过**。
+
+|检查|本轮结果|
+|---|---|
+|`poetry run pytest -q`|722 passed|
+|`poetry run ruff check src tests examples`|通过；验收脚本也单独检查通过|
+|`poetry run mypy`|46个源文件通过，含公开业务返回类型与 raw 事件收窄|
+|`poetry check --lock`|通过，依赖及锁文件未变|
+|`poetry build`|0.3.0a1 wheel / sdist 成功，仅本地构建|
+|示例导入、`--help`|全部离线通过，不访问硬件|
+|wheel 核对|包内源码与当前 src/limivia 逐字节一致，含 py.typed|
+|隔离 wheel 导入与冒烟|临时目录、`python -I`，同步与异步 GPIO 业务流程均通过；注入测试侧模拟设备|
+|sdist 核对|包含新增业务测试、异步闪烁示例与冻结协议契约|
+
+新增业务与分发测试覆盖并发关联、多等待者、控制申请合并及 control_busy、受理与终态区分、调用取消与设备取消的区别、操作超时及晚到完成、断连与 boot 变化、订阅广播与溢出、同资源串行、取消中打开/关闭、级联关闭等待原资源树、丢失打开响应后的未知状态、驱动及副作用诊断，以及用户/握手异常与传输清理同时失败。
+
+### 证据边界
+
+- **模拟设备**：业务流程、错误注入及资源生命周期由 tests/fakes.py 和针对性夹具验证。
+- **真实客户端 loopback**：沿用 websockets/paho-mqtt 的本机报文与 TLS 回归，仍通过；MQTT 服务端为测试夹具，不能当成外部 broker 互通。
+- **单板与外部服务**：本轮未运行，没有新 GPIO 点灯、BLE、板上 WS/MQTT、外部 UART 或物理波形测量结论。验收脚本只迁移到 raw 接口，未执行。
+
+### 最终本地产物 SHA256
+
+- `limivia-0.3.0a1-py3-none-any.whl`：`fdad7054b12743ddf75f5fc3e7906b65245d4ff8c23508119a4cdf0171b9b3e7`
+- `limivia-0.3.0a1.tar.gz`：`0a9887989020473baba07857e0ad80b67d71bff4da77007ac65ada8fa234e6ba`
+
+---
+
+# 2026-10-23 历史协议核心与单板验收
 
 日期：2026-10-23。本轮仅修改 SDK 源码、类型、测试、示例和文档。沿用 `feature/protocol-v2-sdk`，分批本地提交；没有发布、推送、发布 tag 或读取发布令牌，没有修改 server 或固件源码。镜像切换只使用现有固件 OTA 工具，没有重新分区、格式化或写 eFuse。
 

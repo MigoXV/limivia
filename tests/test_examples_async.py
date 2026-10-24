@@ -1,21 +1,68 @@
 import asyncio
+import base64
+import json
+import struct
+import sys
+from functools import partial
+from types import SimpleNamespace
 
-from examples import _common
-from examples._common import Kind
+from examples._common import run
+from examples.peripherals import async_adc, async_gpio_blink
 from limivia import AsyncLimivia
-from tests.fakes import FakeBackend
+from tests.fakes import FakeBackend, FakeTransport
 
 
-def test_async_resource_cleanup_and_single_event_consumer(monkeypatch):
-    backend = FakeBackend()
+def use_backend(monkeypatch, module, backend, **asyncio_functions):
     monkeypatch.setattr(
-        _common, "AsyncLimivia", lambda: AsyncLimivia(backend=backend, job_poll_interval=0.01)
+        module,
+        "AsyncLimivia",
+        SimpleNamespace(
+            connect=partial(AsyncLimivia.connect, backend=backend, job_poll_interval=0.01),
+        ),
     )
 
-    async def run():
-        async with _common.connect_async(Kind.usb, None, control=True) as c:
-            async with _common.resource_async(c, "adc", {"pin": 0}, {}) as resource:
-                assert resource
+    async def sleep(delay):
+        await asyncio.sleep(0)
 
-    asyncio.run(run())
-    assert not backend.connection.resources and backend.connection.closed
+    monkeypatch.setattr(module, "asyncio", SimpleNamespace(sleep=sleep, **asyncio_functions))
+
+
+def test_async_blink_runs_five_cycles_and_releases(monkeypatch):
+    backend = FakeBackend()
+    use_backend(monkeypatch, async_gpio_blink, backend)
+    monkeypatch.setattr(sys, "argv", ["async_gpio_blink"])
+    run(async_gpio_blink.main)
+    writes = [
+        command["params"]["args"]["level"]
+        for command in backend.connection.commands
+        if command["op"] == "resource.call" and command["params"]["action"] == "write"
+    ]
+    assert writes == [1, 0] * 5
+    assert backend.connection.closed and not backend.connection.resources
+
+
+def test_async_adc_prints_only_three_decoded_samples(monkeypatch, capsys):
+    class Sampling(FakeTransport):
+        async def handle(self, wire):
+            await super().handle(wire)
+            if wire["method"] == "resource.call" and wire["params"]["args"]["action"] == "events":
+                for job in self.jobs.values():
+                    if job["action"] == "events":
+                        job["result"]["events"] = [
+                            {
+                                "sequence": index,
+                                "time_us": float(index * 100000),
+                                "data": base64.b64encode(
+                                    struct.pack("<ii", 100 + index, -1)
+                                ).decode(),
+                            }
+                            for index in range(4)
+                        ]
+
+    backend = FakeBackend(Sampling())
+    use_backend(monkeypatch, async_adc, backend, timeout=asyncio.timeout)
+    asyncio.run(async_adc.main())
+    samples = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [sample["raw"] for sample in samples] == [100, 101, 102]
+    assert all(sample["millivolts"] is None for sample in samples)
+    assert backend.connection.closed and not backend.connection.resources

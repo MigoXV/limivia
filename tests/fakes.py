@@ -1,6 +1,7 @@
 """测试侧v3设备：控制响应/断线/作业，不能作为真实硬件证据。"""
 
 import asyncio
+import base64
 import copy
 import json
 
@@ -50,11 +51,14 @@ class FakeTransport:
         self.hello = copy.deepcopy(HELLO)
         self.jobs = {}
         self.resources = {}
+        self.uart_data = {}
         self.next_id = 1
         self.control = None
         self.silent_op = None
         self.disconnect_op = None
         self.refuse = False
+        self.reject_op = None
+        self.reject_reason = "test_refusal"
         self.hold_jobs = False
         self.job_state = "completed"
         self.result_expired = False
@@ -155,8 +159,10 @@ class FakeTransport:
             return
         if op == self.silent_op or not self.respond:
             return
-        if self.refuse and op != "hello":
-            await self.emit({"id": command["id"], "ok": False, "error": {"code": "test_refusal"}})
+        if (self.refuse or op == self.reject_op) and op != "hello":
+            await self.emit(
+                {"id": command["id"], "ok": False, "error": {"code": self.reject_reason}}
+            )
             return
         if op == "hello":
             nonce = context["client_nonce"]
@@ -196,11 +202,22 @@ class FakeTransport:
             if not self.hold_jobs:
                 result["state"] = self.job_state
             result["result_expired"] = self.result_expired
+            resource = self.resources.get(result["resource"])
+            if resource and result["state"] != "accepted":
+                if result["state"] == "completed" and result["action"] == "close":
+                    self.resources.pop(result["resource"], None)
+                elif result["action"] in ("open", "close"):
+                    resource["state"] = "ready" if result["state"] == "completed" else "fault"
         elif op == "job.cancel":
             self.job_state = "cancelled"
             result = copy.deepcopy(self.jobs[p["job_id"]])
             result["cancel_requested"] = True
         elif op == "resource.get":
+            if p["resource"] not in self.resources:
+                await self.emit(
+                    {"id": command["id"], "ok": False, "error": {"reason": "resource_not_found"}}
+                )
+                return
             result = self.resources[p["resource"]]
         elif (
             op.startswith(
@@ -208,6 +225,7 @@ class FakeTransport:
                     "resource.open",
                     "resource.call",
                     "resource.close",
+                    "resource.recover",
                     "storage.",
                     "ota.",
                     "wifi.",
@@ -229,7 +247,7 @@ class FakeTransport:
                     "id": resource,
                     "instance": resource,
                     "kind": p["kind"],
-                    "state": "ready",
+                    "state": "opening",
                     "pin_mask": sum(1 << v for v in p["pins"].values()),
                     "definition": p,
                     "parent": p.get("parent", 0),
@@ -237,9 +255,10 @@ class FakeTransport:
             elif op == "resource.call":
                 resource = p["resource"]
                 action = p["action"]
-            elif op == "resource.close":
+            elif op in ("resource.close", "resource.recover"):
                 resource = p["resource"]
-                self.resources.pop(resource, None)
+                if resource in self.resources:
+                    self.resources[resource]["state"] = "closing"
                 action = "close"
             elif op == "outputs.stop":
                 self.control = None
@@ -256,6 +275,27 @@ class FakeTransport:
             }
             self.next_id += 1
             self.jobs[result["job_id"]] = copy.deepcopy(result)
+            if op == "resource.call" and resource in self.resources:
+                info = self.resources[resource]
+                config = info["definition"]["config"]
+                reply = {}
+                if info["kind"] == "gpio":
+                    if action == "write":
+                        config["level"] = p["args"]["level"]
+                    elif action == "read":
+                        reply = {"level": config.get("level", 0)}
+                elif info["kind"] == "adc" and action == "read":
+                    reply = {"raw": 1234, "millivolts": None}
+                elif info["kind"] == "uart":
+                    if action == "write":
+                        self.uart_data[resource] = base64.b64decode(p["args"]["data"])
+                        reply = {"written": len(self.uart_data[resource])}
+                    elif action == "read":
+                        data = self.uart_data.get(resource, b"")[: p["args"]["length"]]
+                        reply = {"length": len(data), "data": base64.b64encode(data).decode()}
+                if action == "events":
+                    reply = {"events": []}
+                self.jobs[result["job_id"]]["result"] = reply
             if op == "outputs.stop":
                 self.jobs[result["job_id"]]["result"] = {
                     "cleanup_faults": 0,

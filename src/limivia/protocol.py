@@ -13,6 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from ._exceptions import InvalidCommandError, ProtocolError
 from ._schema import OPERATIONS, REQUIRED
+from .constants import EventType, OperationName, ResourceAction
 from .types import (
     ClientEvent,
     ClientEventParam,
@@ -26,37 +27,37 @@ from .types import (
 )
 
 EVENT_ADAPTER: TypeAdapter[DeviceEvent] = TypeAdapter(DeviceEvent)  # type: ignore[arg-type]
-RPC_MANAGEMENT = {"hello", "session.ping", "job.get"}
+RPC_MANAGEMENT = {OperationName.HELLO, OperationName.SESSION_PING, OperationName.JOB_GET}
 MANAGEMENT = {
-    "hello",
-    "session.ping",
-    "job.get",
-    "capabilities",
-    "state",
-    "diagnostics",
-    "resource.get",
-    "flow.get",
-    "flow.list",
-    "mux.query",
+    OperationName.HELLO,
+    OperationName.SESSION_PING,
+    OperationName.JOB_GET,
+    OperationName.CAPABILITIES,
+    OperationName.STATE,
+    OperationName.DIAGNOSTICS,
+    OperationName.RESOURCE_GET,
+    OperationName.FLOW_GET,
+    OperationName.FLOW_LIST,
+    OperationName.MUX_QUERY,
 }
 OBSERVERS = {
-    "hello",
-    "session.ping",
-    "event.subscribe",
-    "event.unsubscribe",
-    "control.acquire",
-    "capabilities",
-    "state",
-    "diagnostics",
-    "mux.query",
-    "mux.preflight",
-    "resource.preflight",
-    "resource.get",
-    "flow.get",
-    "flow.list",
-    "job.get",
-    "outputs.stop",
-    "gpio.group.read",
+    OperationName.HELLO,
+    OperationName.SESSION_PING,
+    OperationName.EVENT_SUBSCRIBE,
+    OperationName.EVENT_UNSUBSCRIBE,
+    OperationName.CONTROL_ACQUIRE,
+    OperationName.CAPABILITIES,
+    OperationName.STATE,
+    OperationName.DIAGNOSTICS,
+    OperationName.MUX_QUERY,
+    OperationName.MUX_PREFLIGHT,
+    OperationName.RESOURCE_PREFLIGHT,
+    OperationName.RESOURCE_GET,
+    OperationName.FLOW_GET,
+    OperationName.FLOW_LIST,
+    OperationName.JOB_GET,
+    OperationName.OUTPUTS_STOP,
+    OperationName.GPIO_GROUP_READ,
 }
 CONTROL_REQUIRED = set(OPERATIONS) - OBSERVERS
 # These return device jobs. Public job.get/cancel describe another job and aren't new jobs.
@@ -65,22 +66,26 @@ JOB_OPERATIONS = {
     for op in OPERATIONS
     if op.startswith(("storage.", "ota.", "wifi.", "mqtt.", "espnow.", "power.", "system."))
 } | {
-    "flow.load",
-    "resource.open",
-    "resource.call",
-    "resource.close",
-    "resource.recover",
-    "gpio.group.read",
-    "gpio.group.write",
-    "rmt.sync",
-    "outputs.stop",
+    OperationName.FLOW_LOAD,
+    OperationName.RESOURCE_OPEN,
+    OperationName.RESOURCE_CALL,
+    OperationName.RESOURCE_CLOSE,
+    OperationName.RESOURCE_RECOVER,
+    OperationName.GPIO_GROUP_READ,
+    OperationName.GPIO_GROUP_WRITE,
+    OperationName.RMT_SYNC,
+    OperationName.OUTPUTS_STOP,
 }
 
 
 def control_required(command: ClientEvent) -> bool:
-    if command.type == "resource.call":
+    if command.type == OperationName.RESOURCE_CALL:
         # Device remains authoritative for the kind-specific read operations.
-        return command.params.get("action") not in ("status", "read", "info")
+        return command.params.get("action") not in (
+            ResourceAction.STATUS,
+            ResourceAction.READ,
+            ResourceAction.INFO,
+        )
     return command.type in CONTROL_REQUIRED
 
 
@@ -207,25 +212,40 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
         ):
             raise ValueError("pins需要GPIO整数映射")
         if (
-            op in ("mqtt.publish", "espnow.send")
+            op in (OperationName.MQTT_PUBLISH, OperationName.ESPNOW_SEND)
             and sum(k in p for k in ("data", "buffer_id", "json")) != 1
         ):
             raise ValueError("必须且只能提供一种payload")
         payloads = (
             [p]
-            if op in ("buffer.write", "storage.chunk", "ota.chunk", "mqtt.publish", "espnow.send")
+            if op
+            in (
+                OperationName.BUFFER_WRITE,
+                OperationName.STORAGE_CHUNK,
+                OperationName.OTA_CHUNK,
+                OperationName.MQTT_PUBLISH,
+                OperationName.ESPNOW_SEND,
+            )
             else []
         )
-        if op == "resource.call":
+        if op == OperationName.RESOURCE_CALL:
             args = p["args"]
             if "data" in args and "buffer_id" in args:
                 raise ValueError("data和buffer_id互斥")
             if "timeout_ms" in args and not _integer(args["timeout_ms"], 0, 1000):
                 raise ValueError("timeout_ms需要0..1000")
             payloads.append(args)
-        if op in {"gpio.group.read", "gpio.group.write", "rmt.sync"}:
+        if op in {
+            OperationName.GPIO_GROUP_READ,
+            OperationName.GPIO_GROUP_WRITE,
+            OperationName.RMT_SYNC,
+        }:
             allowed = {"resource"} | (
-                {"level"} if op == "gpio.group.write" else {"data"} if op == "rmt.sync" else set()
+                {"level"}
+                if op == OperationName.GPIO_GROUP_WRITE
+                else {"data"}
+                if op == OperationName.RMT_SYNC
+                else set()
             )
             for item in p["resources"]:
                 if (
@@ -234,9 +254,9 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
                     or not _integer(item.get("resource"), 1)
                 ):
                     raise ValueError("resources需要资源对象数组")
-                if op == "gpio.group.write" and not _integer(item["level"], 0, 1):
+                if op == OperationName.GPIO_GROUP_WRITE and not _integer(item["level"], 0, 1):
                     raise ValueError("level需要0或1")
-        if op == "rmt.sync":
+        if op == OperationName.RMT_SYNC:
             payloads.extend(p["resources"])
         for payload in payloads:
             if "data" in payload:
@@ -277,7 +297,7 @@ def command_object(
     if not isinstance(wire_id, MissingId) and not valid_id(wire_id):
         raise InvalidCommandError("无效JSON-RPC ID")
     context: dict[str, Any] = {}
-    if command.type == "hello":
+    if command.type == OperationName.HELLO:
         context["client_nonce"] = (
             client_nonce if client_nonce is not None else secrets.token_hex(16)
         )
@@ -369,7 +389,7 @@ def parse_wire_command(text: str) -> tuple[RpcId | MissingId, ClientEvent]:
         }:
             raise ValueError("错误context")
         command = parse_command({"type": value["method"], "params": args})
-        if command.type == "hello":
+        if command.type == OperationName.HELLO:
             nonce = context.get("client_nonce", "")
             if (
                 set(context) != {"client_nonce"}
@@ -406,7 +426,7 @@ def decode_message(
         if message.get("jsonrpc") != "2.0":
             raise ValueError("设备需要JSON-RPC2.0契约")
         if "method" in message:
-            if "id" in message or "result" in message or "error" in message:
+            if "id" in message or ResourceAction.RESULT in message or "error" in message:
                 raise ValueError("通知包络无效")
             name = message["method"]
             params = message.get("params", {})
@@ -418,13 +438,14 @@ def decode_message(
                 context, args = params.get("context", {}), params.get("args", {})
             value = (
                 {"type": name, **context, **args}
-                if name in ("job.finished", "state.changed", "data.available")
-                else {"type": "unknown", "raw": message}
+                if name
+                in (EventType.JOB_FINISHED, EventType.STATE_CHANGED, EventType.DATA_AVAILABLE)
+                else {"type": EventType.UNKNOWN, "raw": message}
             )
         else:
             if "id" not in message or not valid_id(message["id"]):
                 raise ValueError("响应需要ID")
-            if ("result" in message) == ("error" in message):
+            if (ResourceAction.RESULT in message) == ("error" in message):
                 raise ValueError("result/error必须互斥")
             context = response_context(message)
             if request_id is None and type(message["id"]) is int and message["id"] > 0:
@@ -451,7 +472,7 @@ def decode_message(
             if error is not None:
                 jid = error.data.get("job_id")
                 value = {
-                    "type": "command.failed",
+                    "type": EventType.COMMAND_FAILED,
                     **meta,
                     "error": error,
                     "job_id": jid if _integer(jid, 1) else None,
@@ -461,19 +482,19 @@ def decode_message(
                 if not isinstance(result, dict):
                     raise ValueError("value需要对象")
                 if op in JOB_OPERATIONS and "job_id" in result:
-                    value = {"type": "command.accepted", **meta, "job": result}
+                    value = {"type": EventType.COMMAND_ACCEPTED, **meta, "job": result}
                 else:
                     name = (
                         f"{op}.completed"
                         if op
                         in (
-                            "hello",
-                            "state",
-                            "capabilities",
-                            "resource.get",
-                            "diagnostics",
+                            OperationName.HELLO,
+                            OperationName.STATE,
+                            OperationName.CAPABILITIES,
+                            OperationName.RESOURCE_GET,
+                            OperationName.DIAGNOSTICS,
                         )
-                        else "command.completed"
+                        else EventType.COMMAND_COMPLETED
                     )
                     value = {"type": name, **meta, "result": result}
         return EVENT_ADAPTER.validate_python(value)
@@ -484,9 +505,9 @@ def decode_message(
 
 def event_to_wire(event: DeviceEvent, request_id: RpcId | MissingId = MISSING_ID) -> str | None:
     """重编码RPC/通知；job查询终态和SDK聚合结果不伪造设备RPC响应。"""
-    if event.type == "unknown":
+    if event.type == EventType.UNKNOWN:
         value = event.raw
-    elif event.type in ("job.finished", "state.changed", "data.available"):
+    elif event.type in (EventType.JOB_FINISHED, EventType.STATE_CHANGED, EventType.DATA_AVAILABLE):
         args = event.model_dump(exclude={"type", "boot_id", "session"})
         value = {
             "jsonrpc": "2.0",
@@ -500,20 +521,20 @@ def event_to_wire(event: DeviceEvent, request_id: RpcId | MissingId = MISSING_ID
         isinstance(event, ResponseEvent)
         and event.type
         in (
-            "hello.completed",
-            "state.completed",
-            "capabilities.completed",
-            "resource.get.completed",
-            "diagnostics.completed",
-            "command.completed",
-            "command.accepted",
-            "command.failed",
+            EventType.HELLO_COMPLETED,
+            EventType.STATE_COMPLETED,
+            EventType.CAPABILITIES_COMPLETED,
+            EventType.RESOURCE_GET_COMPLETED,
+            EventType.DIAGNOSTICS_COMPLETED,
+            EventType.COMMAND_COMPLETED,
+            EventType.COMMAND_ACCEPTED,
+            EventType.COMMAND_FAILED,
         )
         and not isinstance(request_id, MissingId)
     ):
         context = {"boot_id": event.boot_id, "session": event.session}
         value = {"jsonrpc": "2.0", "id": request_id}
-        if event.type == "command.failed":
+        if event.type == EventType.COMMAND_FAILED:
             if event.error.source == "sdk":
                 return None
             value["error"] = {
@@ -524,11 +545,11 @@ def event_to_wire(event: DeviceEvent, request_id: RpcId | MissingId = MISSING_ID
         else:
             result = (
                 event.job.to_dict()
-                if event.type == "command.accepted"
+                if event.type == EventType.COMMAND_ACCEPTED
                 else event.to_dict()["result"]
             )
             value["result"] = {"context": context, "value": result}
-    elif event.type == "rpc.error":
+    elif event.type == EventType.RPC_ERROR:
         value = {
             "jsonrpc": "2.0",
             "id": event.wire_id,

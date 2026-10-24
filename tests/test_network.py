@@ -153,6 +153,7 @@ def test_mqtt_actual_library_handshake_subscribe_order_and_jobs(protocol):
                 async with client.devices.connect(
                     kind="mqtt", target=f"mqtt://{address}", options=options
                 ) as c:
+                    c = c.raw
                     assert (await c.recv()).type == "hello.completed"
                     assert (await result(c, await c.system.time())).type == "job.completed"
                     assert b.events[:3] == [1, 8, 3]
@@ -183,6 +184,7 @@ def test_websocket_actual_library_uses_text_message_and_typed_responses():
                 async with client.devices.connect(
                     kind="ws", target=f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/v3"
                 ) as c:
+                    c = c.raw
                     assert (await result(c, await c.state.retrieve())).type == "state.completed"
                     assert (await result(c, await c.system.time())).type == "job.completed"
 
@@ -231,6 +233,7 @@ def test_mqtt_tls_verifies_server_certificate(certificates, trust):
                     async with client.devices.connect(
                         kind="mqtt", target=f"mqtts://{address}", options=options
                     ) as c:
+                        c = c.raw
                         assert (await c.recv()).type == "hello.completed"
                 else:
                     with pytest.raises(ssl.SSLError):
@@ -262,6 +265,7 @@ def test_websocket_tls_verifies_server_certificate(certificates, trust):
                 )
                 if trust:
                     async with manager as c:
+                        c = c.raw
                         assert (await c.recv()).type == "hello.completed"
                 else:
                     with pytest.raises(ssl.SSLError):

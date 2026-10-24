@@ -1,67 +1,96 @@
-# JSON-RPC v3 源码示例
+# LIMIVIA 示例
 
-使用Python3.12和Poetry。先运行只读查询，再按任务选择资源示例。`--help`及导入均不访问设备；真正运行资源示例会改变板卡输出或文件。
+普通示例直接展示 SDK 用法：连接设备、操作外设、退出时等待资源释放。同步示例不带前缀，异步示例使用 `async_` 前缀。默认连接唯一 USB 板卡；引脚、电平和固定选项使用 SDK 命名常量，频率、时长等参数直接写在代码里，便于阅读、复制和修改。
 
-## 目录导航
+## 从点灯开始
 
-|目录|内容|
+[点灯](peripherals/gpio.py)的主体只有几行：
+
+```python
+from limivia import Level, Limivia, Pins, TransportKind
+
+with Limivia.connect(kind=TransportKind.USB) as board:
+    with board.gpio.output(Pins.LED, value=Level.HIGH) as led:
+        input("灯已亮，按回车熄灭…")
+        led.write(Level.LOW)
+```
+
+使用 Python3.12、Poetry 和项目内 `.venv`，从仓库根目录运行：
+
+```bash
+poetry run python -m examples.peripherals.gpio
+poetry run python -m examples.peripherals.gpio_blink
+poetry run python -m examples.peripherals.async_gpio_blink
+```
+
+闪烁示例执行五次，每次高、低电平各保持约 0.5 秒；每次写入都等待设备确认。异步示例以 `await` 和 `async with` 表达相同生命周期，不阻塞事件循环。
+
+所有示例导入和 `--help` 都不访问硬件。普通脚本的 `_common.run(main)` 只处理帮助、日志与退出码；连接、采样和资源操作都直接写在 `main()` 中。
+
+`Pins.LED` 是本板 D5 / GPIO13，`Level.HIGH/LOW` 是逻辑电平；`TransportKind.USB` 是 USB 传输。这些常量的值仍是原生字符串或整数，不需要 `.value`。其余固定选项从 `limivia.constants` 导入，例如通知主题 `NotificationTopic.DATA`、外设种类 `PeripheralKind.TIMER` 和动作 `ResourceAction.READ`。
+
+引脚名称不等于使用许可：`Pins.STATUS_LED`、`Pins.BOOT_BUTTON`、`Pins.USB_DM/USB_DP` 仍受固件保护。UART 示例使用 `Pins.GPIO20/21` 表达示例接线；频率、采样间隔和计数继续按 API 单位直接填写。
+
+## 普通示例
+
+|用途|模块|默认行为|
+|---|---|---|
+|能力发现|`examples.device.discover`|只读完整能力|
+|同步状态|`examples.device.state`|只读一致快照|
+|异步状态|`examples.device.async_state`|异步读取一致快照|
+|通知订阅|`examples.device.async_events`|订阅两秒，退出时取消订阅|
+|点灯|`examples.peripherals.gpio`|GPIO13 点亮，按回车熄灭|
+|同步闪烁|`examples.peripherals.gpio_blink`|GPIO13 闪烁五次|
+|异步闪烁|`examples.peripherals.async_gpio_blink`|同上，异步等待|
+|PWM|`examples.peripherals.pwm`|GPIO13，1kHz、25% 占空比|
+|ADC|`examples.peripherals.adc`|读取 GPIO0 的 raw/mV|
+|周期 ADC|`examples.peripherals.async_adc`|每 100ms 采样，读取三条已解码记录|
+|UART|`examples.peripherals.uart`|GPIO20/21 内部回环，读写字节|
+|板上定时器|`examples.peripherals.timer`|GPIO13 定时翻转，等待资源释放|
+
+统一用 `poetry run python -m 模块名` 运行，不再接受旧的 `--kind/--target/--pin/--duration` 等参数。需要修改时，直接编辑相应 SDK 调用。例如，多台 USB 设备时明确指定目标：
+
+```python
+from limivia import TransportKind
+
+with Limivia.connect(kind=TransportKind.USB, target="/dev/ttyACM0") as board:
+    ...
+```
+
+BLE 使用 `kind=TransportKind.BLE`；网络连接还需明确 URL 及对应配置，见下节。
+
+## 多传输与凭据配置
+
+[连接配置示例](device/connect.py)是专门保留 CLI 的入口，只读设备状态：
+
+```bash
+poetry run python -m examples.device.connect --help
+poetry run python -m examples.device.connect --kind usb --target /dev/ttyACM0
+poetry run python -m examples.device.connect --kind ble
+poetry run python -m examples.device.connect --kind ws --target ws://板卡IP/v3
+LIMIVIA_DEVICE_ID=目标MAC poetry run python -m examples.device.connect --kind mqtt --target mqtts://broker.example:8883
+```
+
+此入口支持 `LIMIVIA_TRANSPORT/LIMIVIA_TARGET` 默认参数和 `LIMIVIA_DEVICE_ID` 身份校验；MQTT 的账号/密码使用 `LIMIVIA_MQTT_USERNAME/LIMIVIA_MQTT_PASSWORD`。TLS 证书文件使用 `LIMIVIA_CA_FILE/LIMIVIA_CERT_FILE/LIMIVIA_KEY_FILE`，不把凭据嵌入 URL。
+
+这些环境变量只由专门的连接示例读取。普通示例直接使用源码中的连接参数；可将连接配置示例中的相应 SDK 配置复制过去。
+
+## 高级示例
+
+|模块|展示内容|
 |---|---|
-|[device/](device/)|设备发现、状态快照和事件订阅|
-|[peripherals/](peripherals/)|GPIO、PWM、timer、ADC和UART资源操作|
-|[workflows/](workflows/)|按能力选择功能、文件存储、离线流程和全局停止|
+|`examples.device.raw_events`|独立订阅 raw 事件，关联两个只读请求|
+|`examples.workflows.async_profile`|按实际能力选择 UART 内部回环或片内温度|
+|`examples.workflows.storage`|SHA256、分块上传、读回校验，以及删除/中止|
+|`examples.workflows.flow`|上传流程定义、启动、查询、停止并移除|
+|`examples.workflows.cleanup`|显式全局停止，并持久禁止流程自启|
 
-同一主题下用 `sync_` 和 `async_` 前缀区分同步、异步入口；`discover` 是同步只读示例。共享连接、CLI参数和事件等待工具集中在根目录 `_common.py`。
+高级示例同样不带 CLI 参数。存储与流程仍保留上传 ID、分块、提交和清理步骤，避免隐去真实生命周期；清理失败不能覆盖原始错误。文件系统需预先初始化，示例不自动格式化。`cleanup` 会影响其他控制来源，只有需要全局停止时才运行它。
 
-## 设备查询与事件
+普通示例只释放自己创建的资源，不隐式全局停止或抢占控制。超时不等于未执行，取消等待不等于设备作业已取消，清理失败也不能声称资源已释放。通知与业务等待独立分发，通知本身不包含完整采样数据。
 
-```bash
-poetry run python -m examples.device.discover --kind usb
-poetry run python -m examples.device.sync_state --kind usb
-poetry run python -m examples.device.async_state --kind usb
-poetry run python -m examples.device.async_events --kind usb --duration 2
-```
+## 验证边界
 
-## 外设操作
+示例精简阶段运行相关离线测试；随后常量接入阶段执行 SDK 完整回归与本地构建。本轮没有连接单板或访问外部服务。模拟设备验证了普通资源示例的实际入口；高级上传编排另有清理失败注入测试。全部模块均检查离线导入和 `--help`。
 
-```bash
-poetry run python -m examples.peripherals.sync_gpio --kind usb --pin 13 --duration 1
-poetry run python -m examples.peripherals.sync_pwm --kind usb --frequency 1000 --duty 25
-poetry run python -m examples.peripherals.sync_timer --kind usb --high-ms 100 --low-ms 100 --count 2
-poetry run python -m examples.peripherals.sync_adc --kind usb --pin 0
-poetry run python -m examples.peripherals.async_adc --kind usb --pin 0 --samples 3 --interval-ms 100
-poetry run python -m examples.peripherals.sync_uart --kind usb
-```
-
-## 完整工作流
-
-```bash
-poetry run python -m examples.workflows.async_profile --kind usb
-poetry run python -m examples.workflows.sync_storage --kind usb
-poetry run python -m examples.workflows.sync_flow --kind usb
-poetry run python -m examples.workflows.sync_cleanup --kind usb
-```
-
-## 连接与运行约定
-
-USB/BLE扫描得到多台设备时必须`--target`明确选择；稳定by-id端口需解析到扫描到的原生USB端口。默认示例使用USB，库的旧默认连接方式仍为BLE。可用`LIMIVIA_TRANSPORT/LIMIVIA_TARGET`设置默认参数，`LIMIVIA_DEVICE_ID`校验预期MAC。
-
-网络不扫描：
-
-```bash
-poetry run python -m examples.device.sync_state --kind ws --target ws://板卡IP/v3
-LIMIVIA_DEVICE_ID=目标MAC poetry run python -m examples.device.sync_state --kind mqtt --target mqtts://broker.example:8883
-```
-
-MQTT另使用`LIMIVIA_MQTT_USERNAME/LIMIVIA_MQTT_PASSWORD`；TLS证书文件通过`LIMIVIA_CA_FILE/LIMIVIA_CERT_FILE/LIMIVIA_KEY_FILE`提供。SDK不会自动配置板上Wi-Fi或broker，也不自动发布/重连。不要在URL中嵌入凭据。
-
-同步/异步示例分别展示同一资源生命周期：明确取得控制、等待open设备作业完成、操作、finally关闭并确认。采样通知本身没有样本，ADC示例查询events并解码8字节raw/mV记录；负mV表示未校准。连续ADC的原始type2格式与此不同，不能混用解码器。
-
-UART示例用GPIO20/21内部回环，不要求外部器件；它不验证外部波形。存储示例用唯一文件名、SHA256分块写入/读回/删除；文件系统需已初始化，示例不自动格式化。流程示例上传默认手动、无外部输出的定义，启动并查询后停止/移除和删除文件。
-
-PWM、GPIO和timer正常结束会关闭自有资源。流程完成本身不会清空输出；其他来源的实验也不会因SDK断开而停止。`sync_cleanup`显式停止全部实验并持久禁止自启，影响所有控制来源。首次中断会进入finally；断线、再次中断或驱动清理失败时，不能声称资源已释放，需重新核对设备再查询/停止。
-
-状态示例携带revision读取全部页，遇到snapshot_expired最多重新取3次，只在整组成功后输出。不要同时启动多个recv或迭代器；后台心跳和作业查询无需单独消费者。
-
-板级保护和能力以设备capabilities为准；GPIO0/1/3/4可改数字用途但先关闭ADC；GPIO13有板载LED负载。仅3.3V逻辑，不能把5V接入GPIO。没有仪器时不将状态、内部回环、浮空采样当作物理精度。
-
-`discover` 识别当前镜像并聚合全部能力，不抢控制、不停止设备。`async_profile` 使用 available 选择 UART 内部回环或片内温度，等待设备作业终态，最后显式全局停止并确认清理/持久化；它会影响其他来源的实验。状态示例使用 state.snapshot()，包含 revision=0 时的跨页一致性检查。
+GPIO13 带板载 LED 负载；UART 内部回环不能证明外部器件互通，ADC 未校准时 `millivolts=None`。板级保护、镜像能力和电气约束仍以实际固件与硬件为准。

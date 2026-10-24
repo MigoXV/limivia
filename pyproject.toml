@@ -1,6 +1,6 @@
 [project]
 name = "limivia"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "LIMIVIA：事件式协议v3 Python SDK"
 authors = [{name = "migo", email = "1695587905@qq.com"}]
 readme = "README.md"
@@ -34,6 +34,7 @@ line-length = 100
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["SIM117"]
+"examples/*/*.py" = ["SIM117"]
 
 [tool.mypy]
 files = ["src/limivia", "tests/typecheck.py", "examples"]

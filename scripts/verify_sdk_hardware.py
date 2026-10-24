@@ -128,7 +128,7 @@ class Harness:
         self.manager = self.client.devices.connect(
             kind="usb", target=self.args.port, expected_device_id=self.args.expected_device
         )
-        self.connection = await self.manager.__aenter__()
+        self.connection = (await self.manager.__aenter__()).raw
         identity = self.connection.identity
         assert identity.device_id == MAC and identity.contract == "limivia-v3-jsonrpc2"
         assert identity.board == "luatos-esp32c3-usb" and identity.jsonrpc == "2.0"

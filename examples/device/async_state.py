@@ -1,17 +1,13 @@
-import asyncio
+from limivia import AsyncLimivia, TransportKind
 
-from .._common import Kind, KindOption, TargetOption, await_result, connect_async, execute
-
-
-async def run(kind: Kind, target: str | None):
-    async with connect_async(kind, target) as connection:
-        snapshot = await await_result(connection, await connection.state.snapshot())
-        print(snapshot.to_json())
+from .._common import run
 
 
-def main(kind: KindOption = Kind.usb, target: TargetOption = None):
-    asyncio.run(run(kind, target))
+async def main():
+    """异步读取唯一 USB 板卡的一致状态快照。"""
+    async with AsyncLimivia.connect(kind=TransportKind.USB) as board:
+        print((await board.state.snapshot()).to_json())
 
 
 if __name__ == "__main__":
-    execute(main)()
+    run(main)

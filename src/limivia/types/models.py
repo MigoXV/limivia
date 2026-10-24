@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, SecretStr, field_validator
 
 from .._models import Model
+from ..constants import ErrorSource, MQTTProtocol
 
 type LinkKind = Literal["usb", "ble", "ws", "mqtt"]
 type Profile = Literal["bus", "signal", "iot"]
@@ -165,7 +166,7 @@ class DeviceError(Model):
     reason: str
     data: dict[str, Any] = Field(default_factory=dict)
     message: str = ""
-    source: Literal["device", "sdk"] = "device"
+    source: Literal["device", "sdk"] = ErrorSource.DEVICE
     may_have_executed: bool = False
     external_effect_possible: bool = False
 
@@ -180,7 +181,7 @@ class WebSocketOptions(Model):
 class MQTTOptions(WebSocketOptions):
     device_id: str
     logical_client: str | None = None
-    protocol: Literal["3.1.1", "5.0"] = "3.1.1"
+    protocol: Literal["3.1.1", "5.0"] = MQTTProtocol.V3_1_1
     username: SecretStr | None = None
     password: SecretStr | None = None
 
