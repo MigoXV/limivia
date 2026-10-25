@@ -2,156 +2,170 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from limivia._models import Model
-
+from .._models import Model
+from ..constants import EventType
 from .commands import Operation
-from .models import ADCSample, DeviceError, GPIOReading, Hello, Snapshot
+from .models import (
+    CapabilitiesPage,
+    DeviceDiscovery,
+    DeviceError,
+    Diagnostics,
+    Hello,
+    JobStatus,
+    ResourceInfo,
+    StatePage,
+    StateSnapshot,
+)
 
 
-class HelloCompletedEvent(Model):
-    type: Literal["hello.completed"] = "hello.completed"
-    op: Literal["hello"] = "hello"
+class ResponseEvent(Model):
     request_id: int
+    op: Operation | Literal["discover", "state.snapshot"]
+    boot_id: str | None = None
+    session: str | None = None
+
+
+class HelloCompletedEvent(ResponseEvent):
+    type: Literal["hello.completed"] = EventType.HELLO_COMPLETED
     result: Hello
 
 
-class StateCompletedEvent(Model):
-    type: Literal["state.completed"] = "state.completed"
-    op: Literal["state"] = "state"
-    request_id: int
-    result: Snapshot
+class StateCompletedEvent(ResponseEvent):
+    type: Literal["state.completed"] = EventType.STATE_COMPLETED
+    result: StatePage
 
 
-class GPIOSetCompletedEvent(Model):
-    type: Literal["gpio.set.completed"] = "gpio.set.completed"
-    op: Literal["gpio.set"] = "gpio.set"
-    request_id: int
-    result: Snapshot
+class CapabilitiesCompletedEvent(ResponseEvent):
+    type: Literal["capabilities.completed"] = EventType.CAPABILITIES_COMPLETED
+    result: CapabilitiesPage
 
 
-class GPIOReadCompletedEvent(Model):
-    type: Literal["gpio.read.completed"] = "gpio.read.completed"
-    op: Literal["gpio.read"] = "gpio.read"
-    request_id: int
-    result: GPIOReading
+class ResourceGetCompletedEvent(ResponseEvent):
+    type: Literal["resource.get.completed"] = EventType.RESOURCE_GET_COMPLETED
+    result: ResourceInfo
 
 
-class PWMSetCompletedEvent(Model):
-    type: Literal["pwm.set.completed"] = "pwm.set.completed"
-    op: Literal["pwm.set"] = "pwm.set"
-    request_id: int
-    result: Snapshot
+class DiagnosticsCompletedEvent(ResponseEvent):
+    type: Literal["diagnostics.completed"] = EventType.DIAGNOSTICS_COMPLETED
+    result: Diagnostics
 
 
-class PWMStopCompletedEvent(Model):
-    type: Literal["pwm.stop.completed"] = "pwm.stop.completed"
-    op: Literal["pwm.stop"] = "pwm.stop"
-    request_id: int
-    result: Snapshot
+class CommandCompletedEvent(ResponseEvent):
+    type: Literal["command.completed"] = EventType.COMMAND_COMPLETED
+    result: dict[str, Any]
 
 
-class ADCReadCompletedEvent(Model):
-    type: Literal["adc.read.completed"] = "adc.read.completed"
-    op: Literal["adc.read"] = "adc.read"
-    request_id: int
-    result: ADCSample
+class CommandAcceptedEvent(ResponseEvent):
+    type: Literal["command.accepted"] = EventType.COMMAND_ACCEPTED
+    job: JobStatus
 
 
-class ADCStartCompletedEvent(Model):
-    type: Literal["adc.start.completed"] = "adc.start.completed"
-    op: Literal["adc.start"] = "adc.start"
-    request_id: int
-    result: ADCSample
+class JobCompletedEvent(ResponseEvent):
+    type: Literal["job.completed"] = EventType.JOB_COMPLETED
+    job: JobStatus
 
 
-class ADCStopCompletedEvent(Model):
-    type: Literal["adc.stop.completed"] = "adc.stop.completed"
-    op: Literal["adc.stop"] = "adc.stop"
-    request_id: int
-    result: Snapshot
-
-
-class TimerStartCompletedEvent(Model):
-    type: Literal["timer.start.completed"] = "timer.start.completed"
-    op: Literal["timer.start"] = "timer.start"
-    request_id: int
-    result: Snapshot
-
-
-class TimerStopCompletedEvent(Model):
-    type: Literal["timer.stop.completed"] = "timer.stop.completed"
-    op: Literal["timer.stop"] = "timer.stop"
-    request_id: int
-    result: Snapshot
-
-
-class PinReleaseCompletedEvent(Model):
-    type: Literal["pin.release.completed"] = "pin.release.completed"
-    op: Literal["pin.release"] = "pin.release"
-    request_id: int
-    result: Snapshot
-
-
-class OutputsStopCompletedEvent(Model):
-    type: Literal["outputs.stop.completed"] = "outputs.stop.completed"
-    op: Literal["outputs.stop"] = "outputs.stop"
-    request_id: int
-    result: Snapshot
-
-
-class CommandFailedEvent(Model):
-    type: Literal["command.failed"] = "command.failed"
-    request_id: int
-    op: Operation
+class JobFailedEvent(ResponseEvent):
+    type: Literal["job.failed"] = EventType.JOB_FAILED
+    job: JobStatus
     error: DeviceError
 
 
-class StateChangedEvent(Model):
-    type: Literal["state.changed"] = "state.changed"
+class JobCancelledEvent(ResponseEvent):
+    type: Literal["job.cancelled"] = EventType.JOB_CANCELLED
+    job: JobStatus
+
+
+class CommandFailedEvent(ResponseEvent):
+    type: Literal["command.failed"] = EventType.COMMAND_FAILED
+    error: DeviceError
+    job_id: int | None = None
+    job: JobStatus | None = None
+
+
+class Notification(Model):
+    boot_id: str
+    session: str
+    event_sequence: int
     revision: int
+    resource: int
+    instance: int
+    job_id: int
+    sequence: int
+    dropped: int
 
 
-class ADCSampleEvent(Model):
-    type: Literal["adc.sample"] = "adc.sample"
-    data: ADCSample
+class JobFinishedEvent(Notification):
+    type: Literal["job.finished"] = EventType.JOB_FINISHED
+
+
+class StateChangedEvent(Notification):
+    type: Literal["state.changed"] = EventType.STATE_CHANGED
+
+
+class DataAvailableEvent(Notification):
+    type: Literal["data.available"] = EventType.DATA_AVAILABLE
 
 
 class ProtocolErrorEvent(Model):
-    type: Literal["protocol.error"] = "protocol.error"
+    type: Literal["protocol.error"] = EventType.PROTOCOL_ERROR
     message: str
 
 
 class UnknownEvent(Model):
-    type: Literal["unknown"] = "unknown"
+    type: Literal["unknown"] = EventType.UNKNOWN
     raw: dict[str, Any]
 
 
 class ConnectionClosedEvent(Model):
-    type: Literal["connection.closed"] = "connection.closed"
+    type: Literal["connection.closed"] = EventType.CONNECTION_CLOSED
     error: DeviceError | None = None
 
 
-type CommandCompletedEvent = (
-    HelloCompletedEvent
-    | StateCompletedEvent
-    | GPIOSetCompletedEvent
-    | GPIOReadCompletedEvent
-    | PWMSetCompletedEvent
-    | PWMStopCompletedEvent
-    | ADCReadCompletedEvent
-    | ADCStartCompletedEvent
-    | ADCStopCompletedEvent
-    | TimerStartCompletedEvent
-    | TimerStopCompletedEvent
-    | PinReleaseCompletedEvent
-    | OutputsStopCompletedEvent
-)
+class DiscoveryCompletedEvent(ResponseEvent):
+    type: Literal["discovery.completed"] = EventType.DISCOVERY_COMPLETED
+    result: DeviceDiscovery
+
+
+class StateSnapshotCompletedEvent(ResponseEvent):
+    type: Literal["state.snapshot.completed"] = EventType.STATE_SNAPSHOT_COMPLETED
+    result: StateSnapshot
+
+
+class RpcErrorEvent(Model):
+    type: Literal["rpc.error"] = EventType.RPC_ERROR
+    wire_id: str | int | float | None
+    error: DeviceError
+
+
+class NotificationGapEvent(Model):
+    type: Literal["notifications.gap"] = EventType.NOTIFICATIONS_GAP
+    boot_id: str
+    session: str
+    expected: int
+    received: int
+    dropped: int
+
 
 type DeviceEvent = Annotated[
-    CommandCompletedEvent
+    DiscoveryCompletedEvent
+    | StateSnapshotCompletedEvent
+    | RpcErrorEvent
+    | NotificationGapEvent
+    | HelloCompletedEvent
+    | StateCompletedEvent
+    | CapabilitiesCompletedEvent
+    | ResourceGetCompletedEvent
+    | DiagnosticsCompletedEvent
+    | CommandCompletedEvent
+    | CommandAcceptedEvent
+    | JobCompletedEvent
+    | JobFailedEvent
+    | JobCancelledEvent
     | CommandFailedEvent
+    | JobFinishedEvent
     | StateChangedEvent
-    | ADCSampleEvent
+    | DataAvailableEvent
     | ProtocolErrorEvent
     | UnknownEvent
     | ConnectionClosedEvent,

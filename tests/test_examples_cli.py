@@ -1,100 +1,84 @@
-import importlib
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-import typer
-from typer.testing import CliRunner
 
-from examples import async_adc, sync_state
-from limivia import Limivia
+from examples import _common
 
-from .example_fakes import ExampleBackend
-
-
-def app_for(module):
-    app = typer.Typer()
-    app.command()(module.main)
-    return app
-
-
-@pytest.mark.parametrize(
-    "module,args",
-    [
-        ("sync_gpio", ["--mode", "output", "--pull", "up"]),
-        ("sync_pwm", ["--breath-ms", "100"]),
-        ("async_adc", ["--samples", "0"]),
-        ("async_adc", ["--interval-ms", "99"]),
-        ("async_events", ["--duration", "0"]),
-        ("sync_state", ["--kind", "wifi"]),
-    ],
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+MODULES = sorted(
+    "examples." + ".".join(p.relative_to(EXAMPLES).with_suffix("").parts)
+    for p in EXAMPLES.rglob("*.py")
+    if not p.name.startswith("_")
 )
-def test_invalid_cli_arguments_never_scan(module, args, monkeypatch):
-    def forbidden(*args, **kwargs):
-        pytest.fail("参数不合法时不应扫描设备")
-
-    monkeypatch.setattr("limivia.transports.DeviceBackend.discover", forbidden)
-    result = CliRunner().invoke(app_for(importlib.import_module(f"examples.{module}")), args)
-    assert result.exit_code == 2, result.output
-
-
-def test_cli_environment_selection_and_explicit_override(monkeypatch):
-    backend = ExampleBackend()
-    backend.devices.append({"id": "second", "name": "第二台设备"})
-    monkeypatch.setattr(sync_state, "Limivia", lambda: Limivia(backend=backend))
-    app = app_for(sync_state)
-    runner = CliRunner()
-    env = {"LIMIVIA_TRANSPORT": "usb", "LIMIVIA_TARGET": "second"}
-    result = runner.invoke(app, [], env=env)
-    assert result.exit_code == 0, result.output
-    assert backend.scans == ["usb"]
-    result = runner.invoke(app, ["--kind", "ble", "--target", "test"], env=env)
-    assert result.exit_code == 0, result.output
-    assert backend.scans == ["usb", "ble"]
+# 子进程也禁止访问设备，帮助入口回归时不会意外触碰硬件。
+PROGRAM = """
+import runpy, sys
+from limivia.transports import DeviceBackend
+def forbidden(*args, **kwargs):
+    raise AssertionError("help must not access hardware")
+DeviceBackend.discover = forbidden
+DeviceBackend.transport = forbidden
+sys.argv = [sys.argv[1], *sys.argv[2:]]
+runpy.run_module(sys.argv[0], run_name="__main__")
+"""
 
 
-def test_no_device_is_a_readable_nonzero_error(monkeypatch):
-    backend = ExampleBackend()
-    backend.devices = []
-    monkeypatch.setattr(sync_state, "Limivia", lambda: Limivia(backend=backend))
-    result = CliRunner().invoke(app_for(sync_state), [])
-    assert result.exit_code == 1
-    assert "未发现设备" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_async_cli_interrupt_exits_130(monkeypatch):
-    async def interrupt(*args):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(async_adc, "main_async", interrupt)
-    result = CliRunner().invoke(app_for(async_adc), [])
-    assert result.exit_code == 130
-    assert "已中断" in result.output
-
-
-def test_imports_have_no_logging_or_hardware_side_effects():
+@pytest.mark.parametrize("name", MODULES)
+def test_help_does_not_access_hardware(name):
     result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import importlib
-from pathlib import Path
-from unittest.mock import patch
-
-with patch('logging.basicConfig', side_effect=AssertionError('导入时配置日志')), \\
-     patch('limivia.transports.DeviceBackend.discover', side_effect=AssertionError('导入时扫描')), \\
-     patch('limivia.transports.DeviceBackend.transport', side_effect=AssertionError('导入时连接')):
-    for path in Path('examples').glob('*.py'):
-        importlib.import_module('examples.' + path.stem)
-""",
-        ],
-        cwd=Path(__file__).resolve().parents[1],
+        [sys.executable, "-c", PROGRAM, name, "--help"],
         capture_output=True,
         text=True,
         timeout=10,
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    assert "--help" in result.stdout
+    assert ("--kind" in result.stdout) == (name == "examples.device.connect")
+
+
+@pytest.mark.parametrize("name", MODULES)
+def test_import_is_offline_and_does_not_configure_logging(name):
+    program = """
+import importlib, logging, sys
+from limivia.transports import DeviceBackend
+def forbidden(*args, **kwargs):
+    raise AssertionError("import must have no side effects")
+logging.basicConfig = forbidden
+DeviceBackend.discover = forbidden
+DeviceBackend.transport = forbidden
+importlib.import_module(sys.argv[1])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, name],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_plain_example_rejects_old_cli_options_before_connecting():
+    result = subprocess.run(
+        [sys.executable, "-c", PROGRAM, "examples.peripherals.gpio", "--kind", "usb"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+
+
+def test_runner_parses_help_before_calling_example_or_configuring_logging(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("help must not run example or configure logging")
+
+    monkeypatch.setattr(sys, "argv", ["example", "--help"])
+    monkeypatch.setattr("logging.basicConfig", forbidden)
+    with pytest.raises(SystemExit) as caught:
+        _common.run(forbidden)
+    assert caught.value.code == 0

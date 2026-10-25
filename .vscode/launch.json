@@ -9,7 +9,7 @@
       "args": [
         "scan",
         "--kind",
-        "ble"
+        "usb"
       ],
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
@@ -18,7 +18,7 @@
       "name": "LIMIVIA SDK ADC 示例",
       "type": "debugpy",
       "request": "launch",
-      "module": "examples.async_adc",
+      "module": "examples.peripherals.async_adc",
       "args": [
         "--samples",
         "10"
@@ -30,7 +30,7 @@
       "name": "LIMIVIA SDK 同步状态示例",
       "type": "debugpy",
       "request": "launch",
-      "module": "examples.sync_state",
+      "module": "examples.device.sync_state",
       "args": [],
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
@@ -39,7 +39,7 @@
       "name": "LIMIVIA SDK 异步状态示例",
       "type": "debugpy",
       "request": "launch",
-      "module": "examples.async_state",
+      "module": "examples.device.async_state",
       "args": [],
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
@@ -48,7 +48,7 @@
       "name": "LIMIVIA SDK PWM 示例",
       "type": "debugpy",
       "request": "launch",
-      "module": "examples.sync_pwm",
+      "module": "examples.peripherals.sync_pwm",
       "args": [
         "--duration",
         "5"
@@ -57,10 +57,10 @@
       "justMyCode": true
     },
     {
-      "name": "LIMIVIA SDK 事件分发示例",
+      "name": "LIMIVIA SDK 事件订阅示例",
       "type": "debugpy",
       "request": "launch",
-      "module": "examples.async_events",
+      "module": "examples.device.async_events",
       "args": [
         "--duration",
         "10"

@@ -8,7 +8,8 @@ import serial
 from bleak import BleakClient, BleakScanner
 from serial.tools import list_ports
 
-from .types import LinkKind
+from .constants import TransportKind
+from .types import ConnectionOptions, LinkKind, MQTTOptions, WebSocketOptions
 
 SERVICE = "7b9d0001-7a21-4c9b-8b30-69e5ce1d0001"
 RX = "7b9d0002-7a21-4c9b-8b30-69e5ce1d0001"
@@ -36,8 +37,7 @@ class Transport(Protocol):
 class SerialTransport:
     def __init__(self, port: str):
         self.port = serial.Serial(baudrate=115200, timeout=0.2, write_timeout=2)
-        self.port.dtr = False
-        self.port.rts = False
+        # 原生 USB 板沿用 pySerial 默认线状态；显式拉低会触发该板复位。
         self.port.port = port
 
     async def open(self) -> None:
@@ -45,7 +45,7 @@ class SerialTransport:
 
     async def read(self) -> bytes:
         while self.port.is_open:
-            data = await serial_call(self.port.read, 4096)
+            data = await serial_call(self.port.read, min(4096, self.port.in_waiting) or 1)
             if data:
                 return data
         raise ConnectionError("USB 连接已关闭，请检查数据线、串口占用与设备供电。")
@@ -104,8 +104,10 @@ class DeviceBackend:
         self.targets: dict[tuple[LinkKind, str], object] = {}
 
     async def discover(self, kind: LinkKind) -> list[dict[str, str]]:
+        if kind not in (TransportKind.USB, TransportKind.BLE):
+            raise ValueError("WS/MQTT使用明确地址，不支持扫描")
         self.targets = {key: value for key, value in self.targets.items() if key[0] != kind}
-        if kind == "usb":
+        if kind == TransportKind.USB:
             ports = await asyncio.to_thread(list_ports.comports)
             devices = []
             for port in ports:
@@ -129,8 +131,34 @@ class DeviceBackend:
             )
         return devices
 
-    def transport(self, kind: LinkKind, target: str) -> Transport:
+    def transport(
+        self, kind: LinkKind, target: str, options: ConnectionOptions | None = None
+    ) -> Transport:
+        if kind in (TransportKind.WS, TransportKind.MQTT):
+            from .network_transports import MQTTTransport, WebSocketTransport
+
+            if kind == TransportKind.MQTT:
+                if not isinstance(options, MQTTOptions):
+                    raise ValueError("MQTT需要MQTTOptions")
+                return MQTTTransport(target, options)
+            if isinstance(options, MQTTOptions):
+                raise ValueError("WS不能使用MQTTOptions")
+            return WebSocketTransport(target, options or WebSocketOptions())
+        if options is not None:
+            raise ValueError("USB/BLE不使用网络选项")
         candidate = self.targets.get((kind, target))
+        if (
+            candidate is None
+            and kind == TransportKind.USB
+            and target.startswith("/dev/serial/by-id/")
+        ):
+            import os
+
+            candidate = self.targets.get((kind, os.path.realpath(target)))
         if candidate is None:
             raise ValueError("设备不在最近搜索结果中，请重新搜索并选择设备。")
-        return SerialTransport(str(candidate)) if kind == "usb" else BluetoothTransport(candidate)
+        return (
+            SerialTransport(str(candidate))
+            if kind == TransportKind.USB
+            else BluetoothTransport(candidate)
+        )

@@ -2,391 +2,383 @@ import asyncio
 import threading
 
 import pytest
-from pydantic import ValidationError
 
 from limivia import AsyncLimivia, DeviceConnectionError, Limivia, QueueFullError
-from limivia.types import ADCSample, Snapshot
-
-from .fakes import HELLO, SAMPLE, STATE, FakeBackend
-
-
-def test_async_all_results_and_notifications_share_stream():
-    async def run():
-        backend = FakeBackend()
-        async with AsyncLimivia(backend=backend) as client:
-            assert (await client.devices.list())[0].id == "test"
-            async with client.devices.connect(target="test") as connection:
-                hello = await connection.recv()
-                assert hello.type == "hello.completed"
-                assert hello.result.name == "设备"
-                request_id = await connection.adc.start(pin=0, interval_ms=200)
-                assert isinstance(request_id, int)
-                event = await connection.recv()
-                assert event.type == "adc.start.completed"
-                assert event.request_id == request_id
-                assert isinstance(event.result, ADCSample)
-                transport = backend.transports[-1]
-                await transport.emit({"v": 1, "event": "adc", "data": SAMPLE})
-                await transport.emit({"v": 1, "event": "changed", "revision": 3})
-                assert (await connection.recv()).data.millivolts == 900
-                assert (await connection.recv()).revision == 3
-                transport.refuse = True
-                failed_id = await connection.gpio.set(pin=13, mode="output", level=1)
-                failed = await connection.recv()
-                assert failed.type == "command.failed"
-                assert failed.request_id == failed_id
-                assert failed.error.code == "pin_busy"
-                transport.refuse = False
-                await connection.state.retrieve()
-                assert isinstance((await connection.recv()).result, Snapshot)
-            assert transport.closed
-            assert (await connection.recv()).type == "connection.closed"
-            with pytest.raises(StopAsyncIteration):
-                await connection.recv()
-        assert not [t for t in asyncio.all_tasks() if t.get_name().startswith("limivia-")]
-
-    asyncio.run(run())
+from limivia.types import JobCompletedEvent
+from tests.fakes import FakeBackend, result
 
 
-OPERATIONS = [
-    ("hello", {}, "hello.completed"),
-    ("state.retrieve", {}, "state.completed"),
-    ("gpio.set", {"pin": 13, "mode": "output", "level": 1}, "gpio.set.completed"),
-    ("gpio.read", {"pin": 13}, "gpio.read.completed"),
-    ("pwm.set", {"pin": 13, "frequency": 1000, "duty": 50}, "pwm.set.completed"),
-    ("pwm.stop", {"pin": 13}, "pwm.stop.completed"),
-    ("adc.read", {"pin": 0}, "adc.read.completed"),
-    ("adc.start", {"pin": 0, "interval_ms": 200}, "adc.start.completed"),
-    ("adc.stop", {"pin": 0}, "adc.stop.completed"),
-    ("timer.start", {"pin": 13, "kind": "blink", "high_ms": 500}, "timer.start.completed"),
-    ("timer.stop", {"pin": 13}, "timer.stop.completed"),
-    ("pin.release", {"pin": 13}, "pin.release.completed"),
-    ("outputs.stop", {}, "outputs.stop.completed"),
-]
+def run(coro):
+    return asyncio.run(coro)
 
 
-@pytest.mark.parametrize("method,params,event_type", OPERATIONS)
-@pytest.mark.parametrize("sync", [False, True])
-def test_resource_parity(method, params, event_type, sync):
+async def connect_test(case, **kwargs):
     backend = FakeBackend()
-
-    def resolve(connection):
-        value = connection
-        for part in method.split("."):
-            value = getattr(value, part)
-        return value
-
-    if sync:
-        with Limivia(backend=backend) as client:
-            client.devices.list()
-            with client.devices.connect(target="test") as connection:
-                assert next(connection).type == "hello.completed"
-                request_id = resolve(connection)(**params)
-                event = next(connection)
-                assert event.type == event_type
-                assert event.request_id == request_id
-    else:
-
-        async def run():
-            async with AsyncLimivia(backend=backend) as client:
-                await client.devices.list()
-                async with client.devices.connect(target="test") as connection:
-                    await connection.recv()
-                    request_id = await resolve(connection)(**params)
-                    event = await connection.recv()
-                    assert event.type == event_type
-                    assert event.request_id == request_id
-
-        asyncio.run(run())
-    assert backend.transports[0].closed
-    assert len(set(backend.loops + backend.transports[0].loops)) == 1
+    async with AsyncLimivia(backend=backend, job_poll_interval=0.01, **kwargs) as client:
+        async with client.devices.connect(kind="usb", target="test") as connection:
+            await case(connection.raw, backend.connection)
+    assert backend.connection.closed
 
 
-def test_timeout_late_reply_and_serial_order():
-    async def run():
+def test_handshake_and_all_common_typed_responses():
+    async def case(c, t):
+        assert (await c.recv()).type == "hello.completed"
+        for request, kind in [
+            (await c.state.retrieve(page=1), "state.completed"),
+            (await c.capabilities.retrieve(page=0), "capabilities.completed"),
+            (await c.diagnostics.retrieve(), "diagnostics.completed"),
+        ]:
+            event = await result(c, request)
+            assert event.type == kind
+
+    run(connect_test(case))
+
+
+def test_job_accepted_and_terminal_are_distinct_and_internal_queries_hidden():
+    async def case(c, t):
+        await result(c, await c.control.acquire())
+        request = await c.resource.open(kind="uart", pins={"tx": 20, "rx": 21}, config={})
+        accepted = await result(c, request, accepted=True)
+        assert accepted.type == "command.accepted"
+        terminal = await result(c, request)
+        assert isinstance(terminal, JobCompletedEvent)
+        assert terminal.job.job_id == accepted.job.job_id and terminal.request_id == request
+        assert any(x["op"] == "job.get" for x in t.commands)
+        resource = await result(c, await c.resource.get(resource=terminal.job.resource))
+        assert resource.type == "resource.get.completed" and resource.result.kind == "uart"
+
+    run(connect_test(case))
+
+
+@pytest.mark.parametrize("state,type_", [("failed", "job.failed"), ("cancelled", "job.cancelled")])
+def test_device_job_failure_and_cancellation(state, type_):
+    async def case(c, t):
+        t.job_state = state
+        event = await result(c, await c.system.time())
+        assert event.type == type_ and event.op == "system.time"
+
+    run(connect_test(case))
+
+
+def test_expired_result_is_not_success():
+    async def case(c, t):
+        t.result_expired = True
+        event = await result(c, await c.system.time())
+        assert event.type == "command.failed" and event.error.reason == "result_expired"
+
+    run(connect_test(case))
+
+
+def test_job_timeout_preserves_id_without_replaying_command():
+    async def case(c, t):
+        t.hold_jobs = True
+        event = await result(c, await c.system.time())
+        assert (
+            event.type == "command.failed"
+            and event.error.reason == "result_unknown"
+            and event.job_id
+        )
+        assert len([x for x in t.commands if x["op"] == "system.time"]) == 1
+
+    run(connect_test(case, job_timeout=0.04))
+
+
+def test_stop_bypasses_eight_jobs_and_revokes_control():
+    async def case(c, t):
+        await result(c, await c.control.acquire())
+        t.hold_jobs = True
+        ids = [await c.system.time() for _ in range(8)]
+        with pytest.raises(QueueFullError):
+            await c.system.time()
+        stop = await c.outputs.stop()
+        ack = await result(c, stop, accepted=True)
+        assert ack.type == "command.accepted" and c._core._control is None
+        t.hold_jobs = False
+        assert (await result(c, stop)).type == "job.completed"
+        assert ids
+
+    run(connect_test(case))
+
+
+def test_payload_is_owned_after_submit():
+    async def case(c, t):
+        params = {"resource": 1, "action": "write", "args": {"data": b"abc"}}
+        request = await c.send({"type": "resource.call", "params": params})
+        params["args"]["data"] = b"def"
+        await result(c, request)
+        assert (
+            next(x for x in t.commands if x["op"] == "resource.call")["params"]["args"]["data"]
+            == "YWJj"
+        )
+
+    run(connect_test(case))
+
+
+def test_ordinary_timeout_is_not_retried_and_next_read_can_recover():
+    async def case(c, t):
+        t.silent_op = "state"
+        event = await result(c, await c.state.retrieve())
+        assert event.type == "command.failed" and event.error.may_have_executed
+        assert sum(x["op"] == "state" for x in t.commands) == 1
+        t.silent_op = None
+        assert (await result(c, await c.state.retrieve())).type == "state.completed"
+
+    run(connect_test(case, timeout=0.03))
+
+
+@pytest.mark.parametrize(
+    "field,value", [("protocol", 2), ("board", "other"), ("build_id", "short")]
+)
+def test_incompatible_handshake_closes_without_output(field, value):
+    async def case():
         backend = FakeBackend()
-        async with AsyncLimivia(backend=backend, timeout=0.03) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                transport = backend.transports[-1]
-                transport.silent_op = "state"
-                first = await connection.state.retrieve()
-                second = await connection.gpio.read(pin=13)
-                await asyncio.sleep(0.005)
-                assert [c["id"] for c in transport.commands] == [1, first]
-                event = await connection.recv()
-                assert event.request_id == first and event.type == "command.failed"
-                assert event.error.code == "timeout" and event.error.may_have_executed
-                # 迟到响应不能覆盖第二个请求，也不能发出第二个终态。
-                await transport.emit({"v": 1, "id": first, "ok": True, "result": STATE})
-                event = await connection.recv()
-                assert event.request_id == second and event.type == "gpio.read.completed"
-                await connection.close()
-                remaining = [event async for event in connection]
-                assert [e.type for e in remaining] == ["connection.closed"]
+        backend.connection.hello[field] = value
+        async with AsyncLimivia(backend=backend, connect_timeout=0.5) as client:
+            with pytest.raises(DeviceConnectionError):
+                async with client.devices.connect(kind="usb", target="test"):
+                    pass
+        assert backend.connection.closed
+        assert [x["op"] for x in backend.connection.commands] == ["hello"]
 
-    asyncio.run(run())
+    run(case())
 
 
-def test_queue_capacity_and_local_validation_never_write():
-    async def run():
+def test_wrong_expected_mac_never_sends_mutation():
+    async def case():
         backend = FakeBackend()
         async with AsyncLimivia(backend=backend) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                with pytest.raises(ValidationError):
-                    await connection.pwm.set(pin=13, frequency=0, duty=50)
-                ids = [await connection.state.retrieve() for _ in range(8)]
-                with pytest.raises(QueueFullError):
-                    await connection.state.retrieve()
-                assert len(backend.transports[0].commands) == 1
-                await connection.close()
-                events = [event async for event in connection]
-                assert [e.request_id for e in events if e.type == "command.failed"] == ids
-                assert all(
-                    not e.error.may_have_executed for e in events if e.type == "command.failed"
-                )
+            with pytest.raises(DeviceConnectionError):
+                async with client.devices.connect(
+                    kind="usb", target="test", expected_device_id="wrong"
+                ):
+                    pass
+        assert len(backend.connection.commands) == 1
 
-    asyncio.run(run())
+    run(case())
 
 
-def test_overflow_preserves_results_and_terminal_event():
-    async def run():
+def test_changed_boot_terminates_known_requests():
+    async def case(c, t):
+        t.bad_response = lambda p: {**p, "boot_id": "new"}
+        event = await result(c, await c.state.retrieve())
+        assert event.type == "command.failed" and event.error.reason == "boot_changed"
+
+    run(connect_test(case))
+
+
+def test_old_session_notifications_and_duplicate_responses_are_ignored():
+    async def case(c, t):
+        await c.recv()
+        notice = {"event": "data.available", "boot_id": t.hello["boot_id"], "session": "old"}
+        await t.emit(notice)
+        request = await c.state.retrieve()
+        assert (await result(c, request)).type == "state.completed"
+        await t.emit({"id": t.commands[-1]["id"], "ok": True, "result": {}})
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.03):
+                await c.recv()
+
+    run(connect_test(case))
+
+
+def test_raw_overflow_is_explicit_and_does_not_close_business_connection():
+    from limivia import SubscriptionOverflowError
+    async def case():
         backend = FakeBackend()
         async with AsyncLimivia(backend=backend, event_queue_size=1) as client:
-            async with client.devices.connect(target="test") as connection:
-                # hello 留在队列中，让命令结果触发溢出。
-                request_id = await connection.state.retrieve()
-                await asyncio.wait_for(connection._wake.wait(), 1)
-                for _ in range(100):
-                    if connection._closed:
-                        break
-                    await asyncio.sleep(0.001)
-                events = [event async for event in connection]
-                assert [e.type for e in events] == [
-                    "hello.completed",
-                    "state.completed",
-                    "connection.closed",
-                ]
-                assert events[1].request_id == request_id
-                assert events[-1].error.code == "event_buffer_overflow"
-            assert backend.transports[-1].closed
-
-    asyncio.run(run())
+            async with client.devices.connect(kind="usb", target="test") as board:
+                raw = board.raw
+                await raw.state.retrieve()
+                await asyncio.sleep(0.03)
+                with pytest.raises(SubscriptionOverflowError):
+                    await raw.recv()
+                assert (await board.state.retrieve()).page == 0
+                assert not board._core._closed
+    run(case())
 
 
-def test_consumer_cancellation_and_single_consumer():
-    async def run():
-        async with AsyncLimivia(backend=FakeBackend()) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                waiting = asyncio.create_task(connection.recv())
-                await asyncio.sleep(0)
-                with pytest.raises(RuntimeError, match="消费者"):
-                    await connection.recv()
-                waiting.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await waiting
-                request_id = await connection.state.retrieve()
-                assert (await connection.recv()).request_id == request_id
-
-    asyncio.run(run())
-
-
-def test_disconnect_fails_inflight_and_queued_once():
-    async def run():
-        backend = FakeBackend()
-        async with AsyncLimivia(backend=backend) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                backend.transports[-1].disconnect_op = "gpio.read"
-                first = await connection.gpio.read(pin=13)
-                second = await connection.outputs.stop()
-                events = [event async for event in connection]
-                assert [e.type for e in events] == [
-                    "command.failed",
-                    "command.failed",
-                    "connection.closed",
-                ]
-                assert [e.request_id for e in events[:2]] == [first, second]
-                assert events[0].error.may_have_executed
-                assert not events[1].error.may_have_executed
-            assert backend.transports[-1].closed
-            async with client.devices.connect(target="test") as other:
-                assert (await other.recv()).type == "hello.completed"
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("override", [{"protocol": 2}, {"board": "other"}, {"state": None}])
-def test_bad_handshake_releases_device(override):
-    async def run():
-        backend = FakeBackend()
-        backend.configure = lambda transport: transport.hello.update(override)
-        async with AsyncLimivia(backend=backend) as client:
-            with pytest.raises(DeviceConnectionError):
-                async with client.devices.connect(target="test"):
-                    pytest.fail("不应握手成功")
-            assert backend.transports[-1].closed
-            backend.configure = lambda transport: None
-            async with client.devices.connect(target="test") as connection:
-                assert (await connection.recv()).result.protocol == 1
-
-    asyncio.run(run())
-
-
-def test_connection_open_cancellation_releases_device():
-    async def run():
-        backend = FakeBackend()
-        opening = asyncio.Event()
-
-        def configure(transport):
-            async def open_slow():
-                opening.set()
-                await asyncio.Event().wait()
-
-            transport.open = open_slow
-            transport.close_delay = 0.01
-
-        backend.configure = configure
-        async with AsyncLimivia(backend=backend) as client:
-            manager = client.devices.connect(target="test")
-            task = asyncio.create_task(manager.__aenter__())
-            await opening.wait()
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert backend.transports[-1].closed
-            assert client._active is None
-
-    asyncio.run(run())
-
-
-def test_malformed_and_future_events_are_observable():
-    async def run():
-        backend = FakeBackend()
-        async with AsyncLimivia(backend=backend) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                transport = backend.transports[-1]
-                await transport.queue.put(b"startup banner\n{bad json}\n")
-                assert (await connection.recv()).type == "protocol.error"
-                await transport.emit({"v": 1, "event": "future", "value": 42})
-                event = await connection.recv()
-                assert event.type == "unknown" and event.raw["value"] == 42
-                await connection.state.retrieve()
-                assert (await connection.recv()).type == "state.completed"
-
-    asyncio.run(run())
-
-
-def test_sync_thread_stops_after_exit():
-    before = {t.ident for t in threading.enumerate() if t.name == "limivia-sync"}
-    backend = FakeBackend()
-    with Limivia(backend=backend) as client:
-        with client.devices.connect(target="test") as connection:
-            assert next(connection).result.name == HELLO["name"]
-            connection.close()
-            assert next(connection).type == "connection.closed"
-            with pytest.raises(StopIteration):
-                next(connection)
-    assert {t.ident for t in threading.enumerate() if t.name == "limivia-sync"} == before
-
-
-def test_client_cannot_cross_asyncio_loops():
-    client = AsyncLimivia(backend=FakeBackend())
-    asyncio.run(client.devices.list())
-    with pytest.raises(DeviceConnectionError, match="事件循环"):
-        asyncio.run(client.devices.list())
-
-
-def test_client_close_cancels_opening_and_waits_for_cleanup():
-    async def run():
-        backend = FakeBackend()
-        opening = asyncio.Event()
-
-        def configure(transport):
-            async def slow_open():
-                opening.set()
-                await asyncio.Event().wait()
-
-            transport.open = slow_open
-            transport.close_delay = 0.01
-
-        backend.configure = configure
-        client = AsyncLimivia(backend=backend)
-        task = asyncio.create_task(client.devices.connect(target="test").__aenter__())
-        await opening.wait()
-        await client.close()
+def test_receive_has_one_consumer_and_cancellation_does_not_lose_future_events():
+    async def case(c, t):
+        await c.recv()
+        task = asyncio.create_task(c.recv())
+        await asyncio.sleep(0)
+        with pytest.raises(RuntimeError):
+            await c.recv()
+        task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert backend.transports[-1].closed
-        assert not [t for t in asyncio.all_tasks() if t.get_name().startswith("limivia-")]
+        assert (await result(c, await c.state.retrieve())).type == "state.completed"
 
-    asyncio.run(run())
+    run(connect_test(case))
 
 
-def test_partial_write_timeout_closes_instead_of_writing_next_frame():
-    async def run():
+def test_partial_write_closes_instead_of_reusing_stream():
+    async def case(c, t):
+        t.partial = True
+        event = await result(c, await c.state.retrieve())
+        assert event.type == "command.failed"
+        await asyncio.sleep(0.01)
+        assert t.closed
+
+    run(connect_test(case))
+
+
+def test_close_does_not_claim_to_cancel_device_jobs():
+    async def case(c, t):
+        t.hold_jobs = True
+        request = await c.system.time()
+        await result(c, request, accepted=True)
+        await c.close()
+        events = [e async for e in c]
+        event = next(e for e in events if getattr(e, "request_id", None) == request)
+        assert (
+            event.type == "command.failed"
+            and event.error.reason == "result_unknown"
+            and event.job_id
+        )
+        assert not any(x["op"] == "outputs.stop" for x in t.commands)
+
+    run(connect_test(case))
+
+
+def test_sync_facade_uses_one_continuous_loop_and_thread_exits():
+    backend = FakeBackend()
+    before = {t.ident for t in threading.enumerate()}
+    with Limivia(backend=backend, job_poll_interval=0.01) as client:
+        with client.devices.connect(kind="usb", target="test") as c:
+            c = c.raw
+            rid = c.system.time()
+            for event in c:
+                if getattr(event, "request_id", None) == rid and event.type == "job.completed":
+                    break
+    assert backend.connection.closed and len({id(loop) for loop in backend.connection.loops}) == 1
+    assert not any(
+        t.name == "limivia-sync" and t.ident not in before for t in threading.enumerate()
+    )
+
+
+def test_stop_does_not_rebind_queued_old_control_to_a_new_token():
+    async def case(c, t):
+        await result(c, await c.control.acquire())
+        t.silent_op = "state"
+        first = await c.state.retrieve()
+        await asyncio.sleep(0.01)
+        old = await c.resource.call(resource=1, action="write", args={"data": b"a"})
+        stop = await c.outputs.stop()
+        observed = {}
+        while old not in observed or stop not in observed:
+            event = await c.recv()
+            rid = getattr(event, "request_id", None)
+            if rid in (old, stop):
+                observed[rid] = event
+        failure = observed[old]
+        assert failure.type == "command.failed" and failure.error.reason == "control_revoked"
+        assert not failure.error.may_have_executed
+        assert not any(x["op"] == "resource.call" for x in t.commands)
+        assert first
+
+    run(connect_test(case, timeout=0.05))
+
+
+def test_close_during_handshake_releases_transport():
+    async def case():
         backend = FakeBackend()
-        async with AsyncLimivia(backend=backend, timeout=0.03) as client:
-            async with client.devices.connect(target="test") as connection:
-                await connection.recv()
-                transport = backend.transports[-1]
-                fragments = []
+        backend.connection.silent_op = "hello"
+        client = AsyncLimivia(backend=backend, connect_timeout=0.1)
+        task = asyncio.create_task(client.devices.connect(kind="usb", target="test").__aenter__())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await client.close()
+        assert backend.connection.closed
 
-                async def stalled_write(data):
-                    fragments.append(data[:5])
-                    await asyncio.Event().wait()
-
-                transport.write = stalled_write
-                await connection.state.retrieve()
-                await connection.outputs.stop()
-                events = [event async for event in connection]
-                assert [e.type for e in events] == [
-                    "command.failed",
-                    "command.failed",
-                    "connection.closed",
-                ]
-                assert events[0].error.code == "write_timeout"
-                assert events[0].error.may_have_executed
-                assert not events[1].error.may_have_executed
-                assert len(fragments) == 1
-            assert transport.closed
-
-    asyncio.run(run())
+    run(case())
 
 
-def test_scan_and_connection_ownership_and_recovery():
-    async def run():
-        backend = FakeBackend()
-        started = asyncio.Event()
-        release = asyncio.Event()
-        original = backend.discover
+def test_device_control_required_clears_stale_local_token():
+    async def case(c, t):
+        await result(c, await c.control.acquire())
+        t.bad_response = lambda p: {
+            "id": p["id"],
+            "ok": False,
+            "error": {"code": "control_required"},
+        }
+        event = await result(
+            c, await c.resource.call(resource=1, action="write", args={"data": b"a"})
+        )
+        assert event.type == "command.failed" and c._core._control is None
 
-        async def discover(kind):
-            started.set()
-            await release.wait()
-            return await original(kind)
+    run(connect_test(case))
 
-        backend.discover = discover
-        async with AsyncLimivia(backend=backend) as client:
-            scan = asyncio.create_task(client.devices.list())
-            await started.wait()
-            with pytest.raises(DeviceConnectionError):
-                await client.devices.list()
-            with pytest.raises(DeviceConnectionError):
-                async with client.devices.connect(target="test"):
-                    pass
-            release.set()
-            await scan
-            async with client.devices.connect(target="test") as connection:
-                with pytest.raises(DeviceConnectionError):
-                    await client.devices.list()
-                with pytest.raises(DeviceConnectionError):
-                    async with client.devices.connect(target="test"):
-                        pass
-                assert (await connection.recv()).type == "hello.completed"
-            assert (await client.devices.list())[0].id == "test"
 
-    asyncio.run(run())
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"timeout": float("nan")},
+        {"job_timeout": float("inf")},
+        {"job_poll_interval": float("nan")},
+        {"event_queue_size": True},
+    ],
+)
+def test_client_rejects_unbounded_or_mistyped_limits(kwargs):
+    with pytest.raises(ValueError):
+        AsyncLimivia(**kwargs)
+
+
+def test_internal_heartbeat_renews_without_public_ping_results():
+    async def case(c, t):
+        await c.recv()
+        c._core._heartbeat_interval = 0.01
+        await asyncio.sleep(0.05)
+        assert any(x["op"] == "session.ping" for x in t.commands)
+        assert not c._core._events
+        ids = [x["id"] for x in t.commands]
+        assert ids == sorted(set(ids))
+
+    run(connect_test(case))
+
+
+def test_heartbeat_failure_terminates_without_retry_or_public_ping_result():
+    async def case(c, t):
+        await c.recv()
+        c._core._heartbeat_interval = 0.01
+        t.silent_op = "session.ping"
+        await asyncio.sleep(0.06)
+        events = [e async for e in c]
+        assert len(events) == 1 and events[0].type == "connection.closed"
+        assert events[0].error.reason == "heartbeat_failed"
+        assert sum(x["op"] == "session.ping" for x in t.commands) == 1
+
+    run(connect_test(case, timeout=0.02))
+
+
+def test_public_job_get_describes_existing_job_without_recursive_tracking():
+    async def case(c, t):
+        t.jobs[99] = {"job_id": 99, "resource": 0, "state": "accepted", "action": "time"}
+        t.hold_jobs = True
+        event = await result(c, await c.job.get(job_id=99))
+        assert event.type == "command.completed" and event.result["state"] == "accepted"
+        await asyncio.sleep(0.02)
+        assert not c._core._jobs and sum(x["op"] == "job.get" for x in t.commands) == 1
+
+    run(connect_test(case))
+
+
+def test_job_deadline_does_not_wait_for_or_cancel_a_longer_query_rpc():
+    async def case(c, t):
+        t.silent_op = "job.get"
+        started = asyncio.get_running_loop().time()
+        rid = await c.system.time()
+        unknown = await result(c, rid)
+        assert unknown.type == "command.failed" and unknown.error.reason == "result_unknown"
+        assert asyncio.get_running_loop().time() - started < 0.15
+        query = next(x for x in t.commands if x["op"] == "job.get")
+        t.silent_op = None
+        status = {**t.jobs[unknown.job_id], "state": "completed"}
+        await t.emit({"id": query["id"], "ok": True, "result": status})
+        explicit = await result(c, await c.job.get(job_id=unknown.job_id))
+        assert explicit.type == "command.completed" and explicit.result["state"] == "completed"
+        assert sum(x["op"] == "system.time" for x in t.commands) == 1
+
+    run(connect_test(case, timeout=0.5, job_timeout=0.03))
