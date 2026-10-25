@@ -168,3 +168,5 @@ IoT power.configure{auto_light_sleep?:false,modem_sleep?:"none"/"min"/"max"}；�
 当前 `main/engine.c:operate` 和 USB 实机确认：`gpio.group.read` 的 wire args 为 `{"resources":[{"resource":1}]}`，整数数组会返回 -32602/invalid_argument。上游业务章节中的整数数组写法不符合生产实现；SDK 门面 `gpio.group_read(resources=[id,...])` 负责构造资源对象，直接 send 使用对象数组。保留上游原文供追溯，不复制其错误到 SDK。
 
 SDK 的发送与序号记账另外核对了 `main/runtime.c`：完整帧按 RPC 优先级进入 FIFO 队列，batch 先登记全部 seq 再执行。后续同优先级有效响应可确认旧帧已准入或丢弃，只释放序号准入记账，不替旧请求合成结果。普通查询和写帧共用设备普通准入位置，因此 SDK 串行发送该类在途帧；心跳/作业查询与停止仍有独立有界通道。
+
+通知字段补充：`event_sequence` 是每个会话的通知序号；`data.available.dropped` 是该资源驱动采样/事件缓冲区的累计丢弃数，不表示通知传输丢失。SDK 仅在通知序号缺口时报告 notifications.gap，gap.dropped 为缺失通知条数。固件通知队列为有界 16 格，保留发送字节上限及响应优先级；拥塞下仍通过查询恢复。

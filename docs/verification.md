@@ -1,5 +1,21 @@
 # SDK 本地构建与验证记录
 
+## 0.3.0a3 PyPI 发布确认（fix/board-state-session）
+
+用户明确要求 a3 沿用上次流程，使用 .bashrc 的 PyPI token 发布。发布基于当前通知修复及已有验证记录，准备发布时 HEAD 为 `cd5b677`；SDK 版本已经为0.3.0a3，本轮仅同步发布授权与过期文档说明，没有修改 SDK 运行代码、server 或固件。
+
+- 官方版本页面：https://pypi.org/project/limivia/0.3.0a3/
+- 完整 pytest：**744 项通过**；Ruff、mypy（48个文件）、poetry check --lock 和 poetry build 均通过。
+- wheel METADATA、sdist PKG-INFO、隔离导入 __version__ 及 importlib.metadata.version 均为0.3.0a3。wheel 内源码与当前 src 逐字节一致，并包含 py.typed。
+- 仓库外临时目录以 python -I 运行同步/异步 GPIO 流程，使用测试侧 FakeBackend，资源释放确认。
+- 官方 PyPI JSON 已确认 wheel/sdist 均可见，两个 SHA256 与本地上传文件完全一致。
+- 令牌仅在内存及子进程环境使用，没有输出或写入文件，没有执行 bashrc 命令；本轮未推送 Git、创建发布 tag 或新增实机验收。既有 a3 USB 联调记录保留在下方。
+
+实际发布产物：
+
+- `limivia-0.3.0a3-py3-none-any.whl`：`48585080435131735572f509e2573f1d2ebefeb8eeebc9c2b9aaf16cd595f961`；PyPI 上传时间 `2026-10-25T05:20:14.719486Z`。
+- `limivia-0.3.0a3.tar.gz`：`296833783eee83d67460f3eef2ee58db82264970bc69e1432a28f1174ae3b34c`；PyPI 上传时间 `2026-10-25T05:20:16.288488Z`。
+
 ## 0.3.0a2 PyPI 发布确认（dev）
 
 用户明确授权使用 .bashrc 的 PyPI token 发布本版本。已通过 Poetry 默认官方 PyPI 上传 wheel 和 sdist；凭据仅在内存及子进程环境中使用，没有输出或写入文件，未执行 .bashrc 中的命令。
@@ -176,3 +192,11 @@ IoT light sleep 先保存 accepted job_id，显式关闭/恢复链路，在同�
 真实 BLE、板上 WebSocket、SDK MQTT 到实际 broker/TLS、ESP-NOW第二节点、外部 I²C/SPI/RS485/CAN器件、外部音频/RMT输入、GPIO/ADC/PWM时序精度、功耗和冷上电均未验证。I²S本轮实测为TX，不能据此声称音频采集或原始PDM接收已经外部互通。OTA激活由固件工具验证，SDK commit 的完整镜像激活路径未单独执行。不同操作系统、长稳和外设所有参数组合也未验收。
 
 这是本地开发候选交付，没有安装到 server、没有发布 PyPI。
+
+## 2026-10-25：通知恢复、共享操作与本机 USB 联调
+
+分支 `fix/board-state-session` 从 dev 创建。SDK 修复 data.available.dropped 被误判为通知缺口；连续序号伴随非零累计丢样数不再报告 gap，真正序号跳跃仍报告缺失数量。744 项测试、Ruff、mypy（48 个文件）、Poetry lock 检查和 wheel 构建通过。候选 0.3.0a3 只安装至本机 server .venv，未上传 PyPI。
+
+以 SDK c4499b8、固件 c92b2a0 和 server d333afe 联调。USB 目标 e4:b0:63:ca:b4:78，bus 实际 ELF build `9e80cd5bf1602899e3d0967c1146436554dcba6ec166666b7b09b23f27e88a0f`，boot `f5eb6a9cc04609d8`。无头 Chromium 经正式同源后端点亮 D5/GPIO13，60 秒 3,600 帧内无空闲标签问号或按钮可用性翻转，20 次切换及另一页面直接控制均通过。通知 gap=0，设备 lost_notifications 前后均为 0；最终关闭资源并确认集合为空。
+
+诊断计数仍如实保留：本轮 rejected 0→1、admission_rejected 0→2、tx_failed 0→0；它们不等同于通知丢失，未观察到业务动作失败或重放。证据在 server 的 Git 忽略目录 artifacts/board-state-session/live-check.json。仅测 USB；没有外接负载、无线互通或仪器测量结论。

@@ -1,8 +1,8 @@
 # LIMIVIA Python SDK
 
-**0.3.0a2**，面向合宙 CORE ESP32-C3 简约版固件 **0.3.0-dev / JSON-RPC 2.0 / 协议 v3**。USB、BLE、WebSocket、MQTT 共用协议核心；同步 `Limivia` 和异步 `AsyncLimivia` 提供相同的业务语义。
+**0.3.0a3**，面向合宙 CORE ESP32-C3 简约版固件 **0.3.0-dev / JSON-RPC 2.0 / 协议 v3**。USB、BLE、WebSocket、MQTT 共用协议核心；同步 `Limivia` 和异步 `AsyncLimivia` 提供相同的业务语义。
 
-普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a2`；不要直接将本地 SDK 安装到尚未适配的 server 环境。
+普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a3`；不要直接将本地 SDK 安装到尚未适配的 server 环境。
 
 ## 点亮 GPIO13
 
@@ -228,3 +228,7 @@ poetry build
 本轮业务层重构使用模拟设备和真实客户端 loopback 测试，**没有进行实物验证**。历史单板记录不能替代新业务 API 的硬件验收，内部 UART 回环也不能作为外部器件互通或物理精度证据。
 
 GNU Affero General Public License v3.0（AGPL-3.0-only），见 [LICENSE](LICENSE)。
+
+### 0.3.0a3 通知修复
+
+通知序号缺口与资源采样丢弃分开处理：连续 event_sequence 不因 data.available.dropped 累计计数而误报；真正缺失通知时，notifications.gap.dropped 返回缺失条数。保留原始采样丢弃信息，JSON-RPC v3 与 a2 业务接口兼容。

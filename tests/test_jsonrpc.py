@@ -335,6 +335,7 @@ def test_notification_gap_preserves_notice_and_state_recovers():
         )
         gap, notice = await c.recv(), await c.recv()
         assert gap.type == "notifications.gap" and gap.expected == 1 and gap.received == 4
+        assert gap.dropped == 3
         assert notice.type == "state.changed" and notice.dropped == 2
         assert (await result(c, await c.state.snapshot())).type == "state.snapshot.completed"
 
@@ -483,7 +484,9 @@ def test_discovery_cache_key_checks_build_and_profile_independently_of_session()
         first = await result(c, await c.discover())
         assert first.type == "discovery.completed"
         count = sum(x["op"] == "capabilities" for x in t.commands)
-        c._core.identity = c.identity.model_copy(update={"profile": "new-profile", "build_id": "b" * 64})
+        c._core.identity = c.identity.model_copy(
+            update={"profile": "new-profile", "build_id": "b" * 64}
+        )
         second = await result(c, await c.discover())
         assert second.result.identity.profile == "new-profile"
         assert sum(x["op"] == "capabilities" for x in t.commands) == count * 2
@@ -586,5 +589,44 @@ def test_readonly_batch_rotates_exhausted_seq_before_actual_send():
         frame = next(frame for frame in t.frames if isinstance(frame, list))
         assert [r["params"]["context"]["seq"] for r in frame] == [1, 2]
         assert sum(r["op"] == "hello" for r in t.commands) == 2
+
+    asyncio.run(connect_test(case))
+
+
+def test_sample_loss_does_not_imply_notification_loss():
+    async def case(c, t):
+        await c.recv()
+        for seq, dropped in [(1, 0), (2, 5), (3, 5), (4, 8)]:
+            await t.emit(
+                {
+                    "event": "data.available",
+                    "event_sequence": seq,
+                    "revision": 1,
+                    "resource": 1,
+                    "instance": 1,
+                    "job_id": 0,
+                    "sequence": seq,
+                    "dropped": dropped,
+                }
+            )
+            event = await c.recv()
+            assert event.type == "data.available"
+            assert event.event_sequence == seq and event.dropped == dropped
+        # A real gap still produces one recovery hint; its count describes messages, not samples.
+        await t.emit(
+            {
+                "event": "data.available",
+                "event_sequence": 7,
+                "revision": 1,
+                "resource": 1,
+                "instance": 2,
+                "job_id": 0,
+                "sequence": 1,
+                "dropped": 0,
+            }
+        )
+        gap, event = await c.recv(), await c.recv()
+        assert gap.type == "notifications.gap" and gap.dropped == 2
+        assert event.type == "data.available" and event.instance == 2
 
     asyncio.run(connect_test(case))

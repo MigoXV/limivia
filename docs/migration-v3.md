@@ -1,6 +1,6 @@
-# SDK 0.3.0a2 业务接口迁移
+# SDK 0.3.0a3 业务接口迁移
 
-业务接口版本为 `0.3.0a2`。线协议保持 JSON-RPC v3，不改 server 或固件。需要同时核对 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`；历史自定义 v3 与 v1/v2 均不兼容。
+业务接口版本为 `0.3.0a3`。线协议保持 JSON-RPC v3，不改 server 或固件。需要同时核对 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`；历史自定义 v3 与 v1/v2 均不兼容。
 
 ## 使用命名常量
 
@@ -60,3 +60,7 @@ with Limivia.connect(kind=TransportKind.USB) as board:
 历史线协议迁移还包括：JSON-RPC args/context 分离、错误整数码与 `error.reason/data`、旧引脚命令移除。`gpio.group.read` 的真实 wire 参数为资源对象数组；`raw.gpio.group_read(resources=[id,...])` 继续负责该映射。完整来源见[冻结契约](protocol-v3.md)。
 
 server 的后续适配需要单独核对自身版本；本轮不改动其代码或安装环境。本轮没有对新业务 API 做单板验收。
+
+## 0.3.0a3 通知修复
+
+a3 保持 a2 高层业务接口和 v3 契约。notifications.gap 仅表示 event_sequence 缺口，dropped 为缺失通知条数；data.available.dropped 保留资源采样/事件缓冲累计丢弃数。连续采样丢弃不会持续制造通知缺口。

@@ -1031,14 +1031,14 @@ class AsyncConnection(Resources[Awaitable[int]]):
                 expected = self._last_notification + 1
                 if event.event_sequence < expected:
                     return
-                if event.event_sequence != expected or event.dropped:
+                if event.event_sequence != expected:
                     self._publish(
                         NotificationGapEvent(
                             boot_id=event.boot_id,
                             session=event.session,
                             expected=expected,
                             received=event.event_sequence,
-                            dropped=event.dropped,
+                            dropped=event.event_sequence - expected,
                         )
                     )
                 self._last_notification = event.event_sequence
