@@ -8,7 +8,7 @@ import json
 HELLO = {
     "protocol": 3,
     "jsonrpc": "2.0",
-    "contract": "limivia-v3-jsonrpc2",
+    "contract": "limivia-v3-jsonrpc2-r2",
     "batch_max": 8,
     "sequence_window": 64,
     "sequence_high": 0,
@@ -280,10 +280,31 @@ class FakeTransport:
                 config = info["definition"]["config"]
                 reply = {}
                 if info["kind"] == "gpio":
+                    reply = {
+                        "resource": resource,
+                        "instance": info["instance"],
+                        "revision": 1,
+                        "observed_us": 1000,
+                        "enabled": True,
+                        "mode": config.get("mode", "input"),
+                        "level": config.get("level", 0),
+                    }
                     if action == "write":
                         config["level"] = p["args"]["level"]
+                        reply["level"] = p["args"]["level"]
                     elif action == "read":
                         reply = {"level": config.get("level", 0)}
+                elif info["kind"] == "pwm":
+                    if action == "duty":
+                        config["duty"] = p["args"]["duty"]
+                    reply = {
+                        "resource": resource,
+                        "instance": info["instance"],
+                        "revision": 1,
+                        "observed_us": 1000,
+                        "enabled": True,
+                        "duty_percent": float(config.get("duty", 0)),
+                    }
                 elif info["kind"] == "adc" and action == "read":
                     reply = {"raw": 1234, "millivolts": None}
                 elif info["kind"] == "uart":
@@ -304,6 +325,35 @@ class FakeTransport:
                 }
         else:
             result = {}
+        info = self.resources.get(result.get("resource"))
+        if (
+            getattr(self, "direct", False)
+            and op in {"resource.open", "resource.call"}
+            and info
+            and (
+                info["kind"] == "gpio"
+                and action in {"open", "read", "write", "status"}
+                or info["kind"] == "pwm"
+                and action in {"duty", "status"}
+            )
+        ):
+            while self.hold_jobs:
+                await asyncio.sleep(0)
+            info["state"] = "ready"
+            config = info["definition"]["config"]
+            result = {
+                "resource": info["id"],
+                "instance": info["instance"],
+                "revision": 1,
+                "observed_us": 1000,
+                "enabled": True,
+            }
+            if info["kind"] == "gpio":
+                result.update(mode=config.get("mode", "input"), level=config.get("level", 0))
+            else:
+                result["duty_percent"] = float(config.get("duty", 0))
+            if action == "open":
+                result["info"] = copy.deepcopy(info)
         response = {"id": command["id"], "ok": True, "result": result}
         if self.bad_response:
             response = self.bad_response(response)

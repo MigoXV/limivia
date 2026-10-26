@@ -107,7 +107,7 @@ def test_batch_out_of_order_and_three_independent_counters():
         assert events[ids[1]].type == "job.completed"
         raw_batch = next(frame for frame in t.frames if isinstance(frame, list))
         assert ids[0] != raw_batch[0]["id"]
-        assert raw_batch[0]["id"] != raw_batch[0]["params"]["context"]["seq"]
+        assert raw_batch[0]["id"] != raw_batch[0]["params"][0]["seq"]
         seqs = [x["context"]["seq"] for x in t.commands if x["op"] != "hello"]
         assert seqs == sorted(set(seqs))
         assert sum(x["op"] == "system.time" for x in t.commands) == 1
@@ -347,7 +347,7 @@ def test_sync_batch_discovery_snapshot_and_identity():
     with Limivia(backend=backend) as client:
         with client.devices.connect(kind="usb", target="test") as c:
             c = c.raw
-            assert c.identity.contract == "limivia-v3-jsonrpc2"
+            assert c.identity.contract == "limivia-v3-jsonrpc2-r2"
             for submit, kind in [
                 (c.discover, "discovery.completed"),
                 (c.state.snapshot, "state.snapshot.completed"),
@@ -428,7 +428,7 @@ def test_stop_job_poll_is_not_blocked_by_an_unrelated_slow_job_query():
         original = t.handle
 
         async def selectively_silent(wire):
-            if wire["method"] == "job.get" and wire["params"]["args"]["job_id"] == 1:
+            if wire["method"] == "job.get" and wire["params"][1]["job_id"] == 1:
                 return
             await original(wire)
 
@@ -448,12 +448,14 @@ def test_gpio_group_read_facade_encodes_real_firmware_resource_objects():
     from limivia.resources import Resources
 
     captured = []
-    Resources(lambda command: captured.append(command) or 1).gpio.group_read(resources=[13, 21])
+    Resources(lambda command: captured.append(command) or 1).gpio.group_read(
+        resources=[{"resource": 13, "instance": 13}, {"resource": 21, "instance": 21}]
+    )
     assert captured == [
         {
             "type": "gpio.group.read",
             "params": {
-                "resources": [{"resource": 13}, {"resource": 21}],
+                "resources": [{"resource": 13, "instance": 13}, {"resource": 21, "instance": 21}],
             },
         }
     ]
@@ -473,7 +475,9 @@ def test_resource_read_preserves_current_control_for_firmware_kind_policy():
             await original(wire)
 
         t.handle = require_control_for_read
-        event = await result(c, await c.resource.call(resource=1, action="read", args={}))
+        event = await result(
+            c, await c.resource.call(resource=1, instance=1, action="read", args={})
+        )
         assert event.type == "job.completed"
 
     asyncio.run(connect_test(case))
@@ -587,7 +591,10 @@ def test_readonly_batch_rotates_exhausted_seq_before_actual_send():
         events = await collect(c, ids)
         assert [events[rid].type for rid in ids] == ["state.completed", "diagnostics.completed"]
         frame = next(frame for frame in t.frames if isinstance(frame, list))
-        assert [r["params"]["context"]["seq"] for r in frame] == [1, 2]
+        assert [
+            (r["params"][0] if isinstance(r["params"], list) else r["params"]["context"])["seq"]
+            for r in frame
+        ] == [1, 2]
         assert sum(r["op"] == "hello" for r in t.commands) == 2
 
     asyncio.run(connect_test(case))

@@ -1,13 +1,13 @@
 [project]
 name = "limivia"
-version = "0.3.0a3"
+version = "0.3.0a7"
 description = "LIMIVIA：事件式协议v3 Python SDK"
 authors = [{name = "migo", email = "1695587905@qq.com"}]
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
-dependencies = ["pydantic>=2,<3", "bleak>=1,<4", "pyserial>=3.5,<4", "anyio>=4,<5", "typer>=0.15,<1", "websockets>=15,<16", "paho-mqtt>=2.1,<3"]
+dependencies = ["pydantic>=2,<3", "bleak>=3,<4", "pyserial>=3.5,<4", "anyio>=4,<5", "typer>=0.15,<1", "websockets>=15,<16", "paho-mqtt>=2.1,<3"]
 
 [project.scripts]
 limivia = "limivia.commands.app:app"

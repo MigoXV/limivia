@@ -39,10 +39,10 @@ def test_sync_target_api_and_peripheral_return_types():
     with Limivia.connect(kind="usb", backend=backend, job_poll_interval=0.01) as board:
         with board.gpio.output(13, value=1) as led:
             assert led.read() == 1
-            assert led.write(0) is None
+            assert led.write(0).level == 0
             assert led.read() == 0
         with board.pwm.open(13, frequency=1000, duty=25) as pwm:
-            assert pwm.set_duty(50) is None
+            assert pwm.set_duty(50).duty_percent == 50
             pwm.fade(0, duration_ms=100)
         with board.adc.open(0) as adc:
             assert adc.read().raw == 1234 and adc.read().millivolts is None
@@ -341,6 +341,7 @@ def test_consuming_read_is_bound_to_old_control_and_stop_prevents_sending_it():
                     "type": "resource.call",
                     "params": {
                         "resource": 1,
+                        "instance": 1,
                         "action": "read",
                         "args": {"length": 1},
                     },

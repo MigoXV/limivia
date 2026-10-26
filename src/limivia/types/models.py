@@ -42,7 +42,7 @@ class DeviceIdentity(Model):
     model_config = ConfigDict(extra="allow", strict=True, frozen=True)
     protocol: Literal[3]
     jsonrpc: Literal["2.0"]
-    contract: Literal["limivia-v3-jsonrpc2"]
+    contract: Literal["limivia-v3-jsonrpc2-r2"]
     firmware: str
     board: Literal["luatos-esp32c3-usb"]
     device_id: str

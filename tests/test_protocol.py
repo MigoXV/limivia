@@ -26,17 +26,19 @@ def params_for(op):
         "config": {},
         "resource": 1,
         "parent": 1,
+        "parent_instance": 1,
+        "instance": 1,
         "action": "status",
         "args": {},
         "job_id": 1,
         "buffer_id": 1,
         "upload_id": 1,
         "flow_id": 1,
-        "resources": [{"resource": 1}]
+        "resources": [{"resource": 1, "instance": 1}]
         if op == "gpio.group.read"
-        else [{"resource": 1, "level": 1}]
+        else [{"resource": 1, "instance": 1, "level": 1}]
         if op == "gpio.group.write"
-        else [{"resource": 1, "data": "AA=="}],
+        else [{"resource": 1, "instance": 1, "data": "AA=="}],
         "size": 1,
         "offset": 0,
         "data": "AA==",
@@ -84,7 +86,7 @@ def test_all_namespace_methods_route_to_the_same_operation(op):
     method = "_".join(parts[1:]) if len(parts) > 1 else "retrieve"
     method_params = params_for(op)
     if op == "gpio.group.read":
-        method_params = {"resources": [1]}
+        method_params = {"resources": [{"resource": 1, "instance": 1}]}
     assert getattr(getattr(api, namespace), method)(**method_params) == 42
     assert captured == [{"type": op, "params": params_for(op)}]
 
@@ -99,11 +101,21 @@ def test_all_namespace_methods_route_to_the_same_operation(op):
         {"type": "buffer.delete", "params": {"buffer_id": True}},
         {
             "type": "resource.call",
-            "params": {"resource": 1, "action": "write", "args": {"data": "AA==", "buffer_id": 1}},
+            "params": {
+                "resource": 1,
+                "instance": 1,
+                "action": "write",
+                "args": {"data": "AA==", "buffer_id": 1},
+            },
         },
         {
             "type": "resource.call",
-            "params": {"resource": 1, "action": "read", "args": {"timeout_ms": 1001}},
+            "params": {
+                "resource": 1,
+                "instance": 1,
+                "action": "read",
+                "args": {"timeout_ms": 1001},
+            },
         },
         {"type": "mqtt.publish", "params": {"topic": "test", "data": "AA==", "json": {}}},
         {"type": "storage.record", "params": {"name": "a", "value": float("nan")}},
@@ -136,7 +148,12 @@ def test_binary_conversion_does_not_invent_transaction_chunking():
     command = parse_command(
         {
             "type": "resource.call",
-            "params": {"resource": 1, "action": "write", "args": {"data": b"abc\x00\xff"}},
+            "params": {
+                "resource": 1,
+                "instance": 1,
+                "action": "write",
+                "args": {"data": b"abc\x00\xff"},
+            },
         }
     )
     assert command.params["args"]["data"] == "YWJjAP8="
@@ -166,6 +183,14 @@ def test_real_firmware_frames_decode_and_bridge_without_shape_invention(case):
     frame = case["message"]
     method = case["method"]
     op = cast(Operation, method) if method in OPERATIONS else None
+    if (
+        method == "hello"
+        and frame.get("result", {}).get("value", {}).get("contract") == "limivia-v3-jsonrpc2"
+    ):
+        # Keep the original captured corpus intact: r1 hello is intentionally incompatible.
+        with pytest.raises(ProtocolError):
+            decode_message(frame, op, request_id=1)
+        return
     event = decode_message(frame, op, request_id=1 if op else None)
     wire = event_to_wire(event, frame.get("id"))
     assert wire is not None

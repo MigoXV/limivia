@@ -25,18 +25,17 @@ from .protocol import (
     MANAGEMENT,
     RPC_MANAGEMENT,
     LineReader,
-    command_object,
     control_required,
     decode_message,
-    encode_command,
     encode_frame,
     load_json,
     parse_command,
     response_context,
     valid_id,
+    wire_command_object,
 )
 from .resources import Resources
-from .transports import Transport
+from .transports import BluetoothTransport, Transport
 from .types import (
     ClientEvent,
     ClientEventParam,
@@ -147,6 +146,7 @@ class AsyncConnection(Resources[Awaitable[int]]):
         self._dispatch_wake = asyncio.Event()
         self._lane_inflight = [0, 0, 0]
         self._management_regular = 0
+        self._foreground_burst = 0
         self._rpc_tasks: set[asyncio.Task] = set()
         self._last_notification = 0
         self._receiving = False
@@ -211,7 +211,9 @@ class AsyncConnection(Resources[Awaitable[int]]):
         if not self._opened or self._closed:
             raise DeviceConnectionError("设备连接已关闭，请重新连接")
         command = parse_command(event)
-        encode_command(command, 2147483647, session=self._session, control=self._control)
+        encode_frame(
+            wire_command_object(command, 2147483647, session=self._session, control=self._control)
+        )
         if command.type == OperationName.HELLO and (
             self._jobs
             or self._job_slots
@@ -624,6 +626,8 @@ class AsyncConnection(Resources[Awaitable[int]]):
                     r.command.type == OperationName.SESSION_PING for r in self._pending.values()
                 ):
                     continue
+                lease = self._hello.session_timeout_ms / 1000 if self._hello else 0
+                since_confirmed = asyncio.get_running_loop().time() - self._last_confirmed
                 try:
                     request = self._enqueue(
                         {"type": OperationName.SESSION_PING, "params": {}}, internal=True
@@ -634,7 +638,13 @@ class AsyncConnection(Resources[Awaitable[int]]):
                 try:
                     event = await asyncio.wait_for(
                         asyncio.shield(request.future),
-                        timeout=min(self._timeout, self._heartbeat_interval),
+                        timeout=min(
+                            self._timeout,
+                            max(
+                                self._heartbeat_interval,
+                                lease - since_confirmed - self._heartbeat_interval,
+                            ),
+                        ),
                     )
                 except TimeoutError:
                     event = self._failure(request, ErrorReason.TIMEOUT, "心跳回复未确认")
@@ -698,7 +708,7 @@ class AsyncConnection(Resources[Awaitable[int]]):
             raise QueueFullError("batch超出可跟踪作业容量")
         encode_frame(
             [
-                command_object(
+                wire_command_object(
                     c,
                     self._wire_sequence + i + 1,
                     session=self._session,
@@ -721,7 +731,14 @@ class AsyncConnection(Resources[Awaitable[int]]):
         return 1 if all(r.command.type in RPC_MANAGEMENT for r in requests) else 0
 
     def _next_frame(self):
-        for lane, queue in ((2, self._stops), (1, self._management), (0, self._outgoing)):
+        ordinary = [(0, self._outgoing, False), (1, self._management, False)]
+        if self._foreground_burst >= 4:
+            ordinary.reverse()
+        for lane, queue, urgent_only in [
+            (2, self._stops, False),
+            (1, self._management, True),
+            *ordinary,
+        ]:
             if self._lane_inflight[lane] >= (4 if lane == 1 else 1):
                 continue
             for _ in range(queue.qsize()):
@@ -741,9 +758,16 @@ class AsyncConnection(Resources[Awaitable[int]]):
                     requests[0].command.type == OperationName.JOB_GET
                     and requests[0].command.params.get("job_id") == self._stop_job_id
                 )
+                if urgent_only and not urgent:
+                    queue.put_nowait(item)
+                    continue
                 if lane == 1 and not urgent and self._management_regular >= 2:
                     queue.put_nowait(item)
                     continue
+                if lane == 0:
+                    self._foreground_burst += 1
+                elif not urgent:
+                    self._foreground_burst = 0
                 self._lane_inflight[lane] += 1
                 if lane == 1 and not urgent:
                     self._management_regular += 1
@@ -854,7 +878,7 @@ class AsyncConnection(Resources[Awaitable[int]]):
                 if request.epoch != self._control_epoch:
                     request.control = None
             objects.append(
-                command_object(
+                wire_command_object(
                     request.command,
                     request.wire_id,
                     session=request.session,
@@ -926,7 +950,9 @@ class AsyncConnection(Resources[Awaitable[int]]):
             self._terminate(
                 DeviceError(
                     reason=ErrorReason.CONNECTION_LOST,
-                    message=type(exc).__name__,
+                    message=str(exc)[:512]
+                    if isinstance(self._transport, BluetoothTransport)
+                    else type(exc).__name__,
                     source=ErrorSource.SDK,
                 )
             )
@@ -1111,7 +1137,9 @@ class AsyncConnection(Resources[Awaitable[int]]):
             self._terminate(
                 DeviceError(
                     reason=ErrorReason.CONNECTION_LOST,
-                    message=type(exc).__name__,
+                    message=str(exc)[:512]
+                    if isinstance(self._transport, BluetoothTransport)
+                    else type(exc).__name__,
                     source=ErrorSource.SDK,
                 )
             )

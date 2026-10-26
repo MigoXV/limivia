@@ -52,8 +52,10 @@ from .models import StateSnapshot as StateSnapshot
 from .models import WebSocketOptions as WebSocketOptions
 from .results import ADCSample as ADCSample
 from .results import GPIOConfig as GPIOConfig
+from .results import GPIOState as GPIOState
 from .results import OperationResult as OperationResult
 from .results import PeripheralEvent as PeripheralEvent
 from .results import PeripheralEvents as PeripheralEvents
 from .results import PWMConfig as PWMConfig
+from .results import PWMState as PWMState
 from .results import UARTConfig as UARTConfig

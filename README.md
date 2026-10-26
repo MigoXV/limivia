@@ -1,8 +1,19 @@
 # LIMIVIA Python SDK
 
-**0.3.0a3**，面向合宙 CORE ESP32-C3 简约版固件 **0.3.0-dev / JSON-RPC 2.0 / 协议 v3**。USB、BLE、WebSocket、MQTT 共用协议核心；同步 `Limivia` 和异步 `AsyncLimivia` 提供相同的业务语义。
+**0.3.0a7**，面向合宙 CORE ESP32-C3 简约版固件 **0.3.0a7 / JSON-RPC 2.0 / 协议 v3**。USB、BLE、WebSocket、MQTT 共用协议核心；同步 `Limivia` 和异步 `AsyncLimivia` 提供相同的业务语义。
 
-普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a3`；不要直接将本地 SDK 安装到尚未适配的 server 环境。
+普通方法等待设备确认后返回结果，失败抛类型化异常。SDK 负责请求关联、作业查询、控制权申请和资源释放；高级提交式接口保留在 `board.raw`。本次 Python API 有破坏性调整，见[迁移说明](docs/migration-v3.md)。开发版为 `0.3.0a7`；不要直接将本地 SDK 安装到尚未适配的 server 环境。
+
+
+## 0.3.0a7：WebSocket 会话与 PWM 确认修复
+
+SDK 与固件统一为 **0.3.0a7**，继续使用 `limivia-v3-jsonrpc2-r2`，公开 Python API、JSON-RPC 字段、资源实例、序号、心跳及停止语义不变。
+
+- WebSocket 使用 ESP-IDF 6 的握手后回调建立两槽会话与关闭清理，每个连接设置 `TCP_NODELAY`，减少回复头和正文分开发送引入的延迟。只接受非空、完整的单条 TEXT 消息，拒绝消息级分片；请求长度上限不变。
+- PWM 创建和 `duty` 更新在外设工作线程中等实际 LEDC 占空比寄存器到达量化后的目标值，再返回确认；不再将上一周期的旧值作为成功结果。等待有界（实际定时器两周期加 20ms；创建时兼顾切换前较慢的周期），检查取消，不阻塞 actor。超时沿用驱动错误及可能已执行语义，调用方先查询，不自动重发写入。
+- `fade` 仍表示驱动已启动渐变，不表示整个渐变已结束。SDK 不增加回显请求值的替代逻辑，不新增协议编码或传输实现。
+- 不纳入实验 TCP 接口、诊断端口、强制关闭 Wi-Fi 省电或主机网络策略修改。USB、BLE 与 MQTT 沿用现有传输；Wi-Fi 性能与稳定性以对应实机记录为准。
+
 
 ## 点亮 GPIO13
 
@@ -198,7 +209,7 @@ with Limivia.connect(kind=TransportKind.USB) as board:
 
 ## 契约与验证
 
-只接受 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2`。拒绝 v1/v2 和历史自定义 v3 包络，不恢复旧引脚命令。版本号相同不能证明线协议兼容；运行与构建不依赖相邻固件检出。
+只接受 `protocol=3 / jsonrpc=2.0 / contract=limivia-v3-jsonrpc2-r2`。拒绝 v1/v2 和历史自定义 v3 包络，不恢复旧引脚命令。版本号相同不能证明线协议兼容；运行与构建不依赖相邻固件检出。
 
 [示例指南](examples/README.md)中的普通脚本直接展示 SDK 调用，默认连接唯一 USB 板卡，不带 CLI 参数：
 
@@ -229,6 +240,22 @@ poetry build
 
 GNU Affero General Public License v3.0（AGPL-3.0-only），见 [LICENSE](LICENSE)。
 
-### 0.3.0a3 通知修复
+### 0.3.0a4 通知修复
 
 通知序号缺口与资源采样丢弃分开处理：连续 event_sequence 不因 data.available.dropped 累计计数而误报；真正缺失通知时，notifications.gap.dropped 返回缺失条数。保留原始采样丢弃信息，JSON-RPC v3 与 a2 业务接口兼容。
+
+### BLE 0.3.0a4
+
+BLE 保留逐片有响应写，分片按特征实际 MTU 负载动态选择并限制为 512 字节；BlueZ 不使用可能固定为 23 的客户端 MTU。心跳等待受剩余租约约束，心跳及停止作业查询优先于普通管理查询。管理通道最多四个在途帧，与 a4 固件的有界准入匹配。实机数据与诊断限制见配套工作台验证记录。
+
+Linux 可通过 `AsyncLimivia(ble_adapter="hci1")` 或 `Limivia(ble_adapter="hci1")` 同时指定扫描与连接的控制器。Windows 保持默认值；不把 Linux 的 MTU/连接间隔结论套用到 Windows。a4 的当前默认线格式仍是 JSON-RPC v3。
+
+二进制压缩目前是默认关闭的工程试验：只有匹配 `LV_BLE_BINARY` 的固件试验构建与底层 `BluetoothTransport(binary=True)` 才能配对。它尚未通过实机收益和持续连接门槛，不作为默认协议或已发布能力。当前离线覆盖包含坏长度、残帧、CRC、解压上限及生产 C 编解码互通。
+
+### 0.3.0a5 直接确认结果
+
+配套固件 0.3.0a5，contract 为 `limivia-v3-jsonrpc2-r2`。GPIO open/read/write/status、已有 PWM duty/status 直接等待驱动完成回复；GPIO.write 返回 GPIOState（含实际 level/mode），PWM.set_duty 返回 PWMState，GPIO.read 仍返回 int。GPIO 的 info/initial_state 来自打开回复，无需额外 resource.get。资源调用携带实例，由固件校验旧句柄；raw 的 call/close/recover 和组操作须显式提供 instance，子设备定义须带 parent_instance。上述直接操作不使用 jobs.submit，慢操作保持作业模型。停止/心跳优先，连续四个前台帧后允许后台页继续；写入结果未知时只查询，不重发。
+
+### 0.3.0a6 只读查询精简
+
+只读管理查询与 resource.status 使用固件原已支持的位置参数，省去无用控制字段；写入、消费型读取、握手和停止继续使用原报文。保留 r2 契约及全部实例/会话/序号校验，没有增加压缩算法。USB 对照确认部分查询小幅改善，LED 写入没有稳定收益，因此不修改写入路径。BLE 延迟未复测。

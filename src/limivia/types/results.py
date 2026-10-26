@@ -9,6 +9,23 @@ class OperationResult(Model):
     data: dict[str, Any]
 
 
+class ConfirmedState(Model):
+    resource: int
+    instance: int
+    revision: int
+    observed_us: int
+    enabled: bool
+
+
+class GPIOState(ConfirmedState):
+    mode: Literal["input", "output", "open_drain"]
+    level: Literal[0, 1]
+
+
+class PWMState(ConfirmedState):
+    duty_percent: float
+
+
 class ADCSample(Model):
     raw: int
     millivolts: int | None

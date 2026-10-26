@@ -100,6 +100,7 @@ class MuxResource[T](Resource[T]):
         pins: dict[str, int],
         config: dict[str, Any],
         parent: int | None = None,
+        parent_instance: int | None = None,
         controller: int | None = None,
     ) -> T:
         params: dict[str, Any] = {}
@@ -108,6 +109,7 @@ class MuxResource[T](Resource[T]):
         params["config"] = config
         if parent is not None:
             params["parent"] = parent
+            params["parent_instance"] = parent_instance
         if controller is not None:
             params["controller"] = controller
         return self._send({"type": OperationName.MUX_PREFLIGHT, "params": params})
@@ -121,6 +123,7 @@ class ResourceResource[T](Resource[T]):
         pins: dict[str, int],
         config: dict[str, Any],
         parent: int | None = None,
+        parent_instance: int | None = None,
         controller: int | None = None,
     ) -> T:
         params: dict[str, Any] = {}
@@ -129,6 +132,7 @@ class ResourceResource[T](Resource[T]):
         params["config"] = config
         if parent is not None:
             params["parent"] = parent
+            params["parent_instance"] = parent_instance
         if controller is not None:
             params["controller"] = controller
         return self._send({"type": OperationName.RESOURCE_PREFLIGHT, "params": params})
@@ -140,6 +144,7 @@ class ResourceResource[T](Resource[T]):
         pins: dict[str, int],
         config: dict[str, Any],
         parent: int | None = None,
+        parent_instance: int | None = None,
         controller: int | None = None,
     ) -> T:
         params: dict[str, Any] = {}
@@ -148,6 +153,7 @@ class ResourceResource[T](Resource[T]):
         params["config"] = config
         if parent is not None:
             params["parent"] = parent
+            params["parent_instance"] = parent_instance
         if controller is not None:
             params["controller"] = controller
         return self._send({"type": OperationName.RESOURCE_OPEN, "params": params})
@@ -157,23 +163,26 @@ class ResourceResource[T](Resource[T]):
         params["resource"] = resource
         return self._send({"type": OperationName.RESOURCE_GET, "params": params})
 
-    def close(self, *, resource: int, cascade: bool | None = None) -> T:
+    def close(self, *, resource: int, instance: int, cascade: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
+        params["instance"] = instance
         if cascade is not None:
             params["cascade"] = cascade
         return self._send({"type": OperationName.RESOURCE_CLOSE, "params": params})
 
-    def recover(self, *, resource: int, cascade: bool | None = None) -> T:
+    def recover(self, *, resource: int, instance: int, cascade: bool | None = None) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
+        params["instance"] = instance
         if cascade is not None:
             params["cascade"] = cascade
         return self._send({"type": OperationName.RESOURCE_RECOVER, "params": params})
 
-    def call(self, *, resource: int, action: str, args: dict[str, Any]) -> T:
+    def call(self, *, resource: int, instance: int, action: str, args: dict[str, Any]) -> T:
         params: dict[str, Any] = {}
         params["resource"] = resource
+        params["instance"] = instance
         params["action"] = action
         params["args"] = args
         return self._send({"type": OperationName.RESOURCE_CALL, "params": params})
@@ -192,9 +201,9 @@ class JobResource[T](Resource[T]):
 
 
 class GpioResource[T](Resource[T]):
-    def group_read(self, *, resources: list[int]) -> T:
+    def group_read(self, *, resources: list[dict[str, int]]) -> T:
         params: dict[str, Any] = {}
-        params["resources"] = [{"resource": resource} for resource in resources]
+        params["resources"] = resources
         return self._send({"type": OperationName.GPIO_GROUP_READ, "params": params})
 
     def group_write(self, *, resources: list[dict[str, Any]]) -> T:

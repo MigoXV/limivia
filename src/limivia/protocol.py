@@ -159,7 +159,16 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
         if set(p) - set(OPERATIONS[op]) or set(REQUIRED.get(op, [])) - set(p):
             raise ValueError("命令包含未知参数或缺少必填参数")
         for key, value in p.items():
-            if key in {"resource", "parent", "job_id", "buffer_id", "upload_id", "flow_id"}:
+            if key in {
+                "resource",
+                "instance",
+                "parent",
+                "parent_instance",
+                "job_id",
+                "buffer_id",
+                "upload_id",
+                "flow_id",
+            }:
                 if not _integer(value, 1):
                     raise ValueError(f"{key}需要正整数")
             elif key in {
@@ -207,6 +216,8 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
                 raise ValueError(f"{key}需要字符串")
         if "kind" in p and p["kind"] not in get_args(ResourceKind.__value__):
             raise ValueError("未知资源kind")
+        if "parent" in p and "parent_instance" not in p:
+            raise ValueError("父资源需要 parent_instance")
         if "pins" in p and any(
             not isinstance(k, str) or not _integer(v, 0, 21) for k, v in p["pins"].items()
         ):
@@ -240,7 +251,7 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
             OperationName.GPIO_GROUP_WRITE,
             OperationName.RMT_SYNC,
         }:
-            allowed = {"resource"} | (
+            allowed = {"resource", "instance"} | (
                 {"level"}
                 if op == OperationName.GPIO_GROUP_WRITE
                 else {"data"}
@@ -252,6 +263,7 @@ def parse_command(event: ClientEvent | ClientEventParam | dict[str, Any]) -> Cli
                     not isinstance(item, dict)
                     or set(item) != allowed
                     or not _integer(item.get("resource"), 1)
+                    or not _integer(item.get("instance"), 1)
                 ):
                     raise ValueError("resources需要资源对象数组")
                 if op == OperationName.GPIO_GROUP_WRITE and not _integer(item["level"], 0, 1):
@@ -322,6 +334,31 @@ def command_object(
     if not isinstance(wire_id, MissingId):
         result["id"] = wire_id
     return result
+
+
+def wire_command_object(
+    command: ClientEvent,
+    wire_id: RpcId | MissingId,
+    *,
+    session: str | None = None,
+    control: str | None = None,
+    seq: int = 1,
+    client_nonce: str | None = None,
+) -> dict[str, Any]:
+    """只读管理查询采用已有位置参数；修改、握手和消费型读取保持原报文。"""
+    compact = (command.type in MANAGEMENT and command.type != OperationName.HELLO) or (
+        command.type == OperationName.RESOURCE_CALL
+        and command.params.get("action") == ResourceAction.STATUS
+    )
+    return command_object(
+        command,
+        wire_id,
+        session=session,
+        control=None if compact else control,
+        seq=seq,
+        client_nonce=client_nonce,
+        positional=compact,
+    )
 
 
 def encode_frame(value: Any, *, maximum: int = 1024) -> bytes:

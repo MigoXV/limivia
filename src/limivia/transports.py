@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import sys
+from collections import deque
 from contextlib import suppress
 from typing import Protocol
 
 import serial
 from bleak import BleakClient, BleakScanner
+from bleak.backends.characteristic import BleakGATTCharacteristic
 from serial.tools import list_ports
 
+from ._ble_wire import Reader, pack
+from ._exceptions import DeviceConnectionError
 from .constants import TransportKind
 from .types import ConnectionOptions, LinkKind, MQTTOptions, WebSocketOptions
 
@@ -61,10 +67,19 @@ class SerialTransport:
 
 
 class BluetoothTransport:
-    def __init__(self, device):
+    def __init__(self, device, *, binary: bool = False, ble_adapter: str | None = None):
+        self.binary = binary
+        self._wire = Reader()
+        self._decoded: deque[bytes] = deque()
         self.queue: asyncio.Queue[bytes | Exception] = asyncio.Queue(maxsize=256)
         self.failed = False
-        self.client = BleakClient(device, disconnected_callback=self._disconnected, timeout=15)
+        self._rx: BleakGATTCharacteristic | None = None
+        self.client = BleakClient(
+            device,
+            disconnected_callback=self._disconnected,
+            timeout=15,
+            bluez={"adapter": ble_adapter} if ble_adapter else {},
+        )
 
     def _push(self, data: bytes | Exception) -> None:
         if self.failed:
@@ -77,21 +92,47 @@ class BluetoothTransport:
         self.queue.put_nowait(data)
 
     def _disconnected(self, _client) -> None:
-        self._push(ConnectionError("蓝牙连接已断开，请检查距离、蓝牙状态与设备供电。"))
+        self._push(ConnectionError("蓝牙连接已断开，请检查适配器、设备供电与系统蓝牙日志。"))
 
     async def open(self) -> None:
-        await self.client.connect()
+        try:
+            await self.client.connect()
+        except TimeoutError as exc:
+            raise DeviceConnectionError(
+                "BLE GATT 建连超时（尚未发送业务请求），请检查适配器和系统蓝牙日志。"
+            ) from exc
+        except Exception as exc:
+            raise DeviceConnectionError(
+                f"BLE GATT 建连失败（尚未发送业务请求）：{type(exc).__name__}: {str(exc)[:512]}"
+            ) from exc
+        self._rx = self.client.services.get_characteristic(RX)
+        if self._rx is None:
+            raise ConnectionError("设备未提供 BLE RX 特征")
         await self.client.start_notify(TX, lambda _characteristic, data: self._push(bytes(data)))
 
     async def read(self) -> bytes:
-        item = await self.queue.get()
-        if isinstance(item, Exception):
-            raise item
-        return item
+        while True:
+            if self._decoded:
+                return self._decoded.popleft()
+            item = await self.queue.get()
+            if isinstance(item, Exception):
+                raise item
+            if not self.binary:
+                return item
+            self._decoded.extend(self._wire.feed(item))
 
     async def write(self, data: bytes) -> None:
-        for offset in range(0, len(data), 20):
-            await self.client.write_gatt_char(RX, data[offset : offset + 20], response=True)
+        # This public characteristic property reflects ATT MTU-3 on BlueZ (the
+        # client.mtu_size property can still report 23). Keep acknowledged writes;
+        # the peripheral receives at most 512 bytes per ATT write. Read each frame
+        # again because MTU exchange may finish after service discovery.
+        if self.binary:
+            data = pack(data)
+        payload = min(512, self._rx.max_write_without_response_size) if self._rx else 20
+        if payload < 20:
+            raise ConnectionError("BLE RX 分片容量无效")
+        for offset in range(0, len(data), payload):
+            await self.client.write_gatt_char(RX, data[offset : offset + payload], response=True)
 
     async def close(self) -> None:
         await self.client.disconnect()
@@ -100,7 +141,12 @@ class BluetoothTransport:
 class DeviceBackend:
     """只开放扫描到的候选；板型最终仍由 hello 握手确认。"""
 
-    def __init__(self):
+    def __init__(self, *, ble_adapter: str | None = None):
+        if ble_adapter is not None and (
+            sys.platform != "linux" or not re.fullmatch(r"hci[0-9]+", ble_adapter)
+        ):
+            raise ValueError("ble_adapter 仅支持 Linux 的 hciN 名称")
+        self.ble_adapter = ble_adapter
         self.targets: dict[tuple[LinkKind, str], object] = {}
 
     async def discover(self, kind: LinkKind) -> list[dict[str, str]]:
@@ -117,7 +163,12 @@ class DeviceBackend:
                         {"id": port.device, "name": f"{port.description} · {port.device}"}
                     )
             return devices
-        found = await BleakScanner.discover(timeout=5, return_adv=True, service_uuids=[SERVICE])
+        found = await BleakScanner.discover(
+            timeout=5,
+            return_adv=True,
+            service_uuids=[SERVICE],
+            bluez={"adapter": self.ble_adapter} if self.ble_adapter else {},
+        )
         devices = []
         for device, advertisement in found.values():
             if SERVICE not in [uuid.lower() for uuid in advertisement.service_uuids]:
@@ -160,5 +211,5 @@ class DeviceBackend:
         return (
             SerialTransport(str(candidate))
             if kind == TransportKind.USB
-            else BluetoothTransport(candidate)
+            else BluetoothTransport(candidate, ble_adapter=self.ble_adapter)
         )

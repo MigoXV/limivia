@@ -162,6 +162,7 @@ class AsyncLimivia:
         job_timeout: float = 30,
         job_poll_interval: float = 0.1,
         backend: Backend | None = None,
+        ble_adapter: str | None = None,
     ):
         if (
             any(
@@ -178,7 +179,9 @@ class AsyncLimivia:
         self.event_queue_size = event_queue_size
         self.job_timeout = job_timeout
         self.job_poll_interval = job_poll_interval
-        self._backend = backend if backend is not None else DeviceBackend()
+        if backend is not None and ble_adapter is not None:
+            raise ValueError("自定义 backend 与 ble_adapter 不能同时指定")
+        self._backend = backend if backend is not None else DeviceBackend(ble_adapter=ble_adapter)
         self._active: AsyncConnection | None = None
         self._board: AsyncBoard | None = None
         self._scanning: asyncio.Task | None = None
@@ -362,6 +365,7 @@ class Limivia:
         job_timeout: float = 30,
         job_poll_interval: float = 0.1,
         backend: Backend | None = None,
+        ble_adapter: str | None = None,
     ):
         self._factory = partial(
             AsyncLimivia,
@@ -371,6 +375,7 @@ class Limivia:
             job_timeout=job_timeout,
             job_poll_interval=job_poll_interval,
             backend=backend,
+            ble_adapter=ble_adapter,
         )
         self._portal_context: AbstractContextManager[BlockingPortal] | None = None
         self._portal: BlockingPortal | None = None

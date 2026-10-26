@@ -1535,4 +1535,4 @@ reference = "tuna"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "6b15166c191c5cac2aa6fd97150a0125aa8af7810ee9dfbb857b166b8978ef8d"
+content-hash = "31d26e67293e990cbf760736b3d4c1f2a08008e40dd709dc8ed798783f8aa0d9"

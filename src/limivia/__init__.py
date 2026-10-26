@@ -22,7 +22,7 @@ from ._peripherals import AsyncADCInput, AsyncGPIOPin, AsyncPWMOutput, AsyncReso
 from ._sync import ADCInput, Connection, GPIOPin, Job, PWMOutput, Resource, UARTPort
 from .constants import EventType, Level, Pins, TransportKind
 
-__version__ = "0.3.0a3"
+__version__ = "0.3.0a7"
 
 __all__ = [
     "ADCInput",

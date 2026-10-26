@@ -8,7 +8,13 @@ from limivia.transports import RX, SERVICE, TX, BluetoothTransport, DeviceBacken
 COMMAND = '{"v":3,"id":1,"op":"hello","params":{}}\n'
 
 
-def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(monkeypatch):
+@pytest.mark.parametrize(
+    "payload_size,capacity,expected",
+    [(51, 20, [20, 20, 11]), (411, 180, [180, 180, 51]), (1027, 514, [512, 512, 3])],
+)
+def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(
+    monkeypatch, payload_size, capacity, expected
+):
     class Client:
         def __init__(self, device, disconnected_callback, **kwargs):
             self.disconnected = disconnected_callback
@@ -16,6 +22,11 @@ def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(monkeypatch)
             self.dtr = self.rts = True
             self.notifications = None
             self.connected = False
+            self.services = SimpleNamespace(
+                get_characteristic=lambda _: SimpleNamespace(
+                    max_write_without_response_size=capacity
+                )
+            )
 
         async def connect(self):
             self.connected = True
@@ -37,9 +48,9 @@ def test_ble_transport_subscribes_fragments_and_surfaces_disconnect(monkeypatch)
     async def run():
         transport = BluetoothTransport("test")
         await transport.open()
-        payload = b"x" * 51
+        payload = b"x" * payload_size
         await transport.write(payload)
-        assert list(map(len, transport.client.writes)) == [20, 20, 11]
+        assert list(map(len, transport.client.writes)) == expected
         assert b"".join(transport.client.writes) == payload
         transport.client.notifications(None, bytearray(b"data"))
         assert await transport.read() == b"data"
@@ -121,5 +132,62 @@ def test_serial_transport_preserves_bytes_and_does_not_toggle_reset(monkeypatch)
         assert transport.port.writes == [COMMAND.encode()]
         await transport.close()
         assert not transport.port.is_open
+
+    asyncio.run(run())
+
+
+def test_adapter_selection_applies_to_scan_and_connection(monkeypatch):
+    captured = {}
+
+    async def discover(**kwargs):
+        captured["scan"] = kwargs
+        return {
+            "one": (
+                SimpleNamespace(address="one", name="board"),
+                SimpleNamespace(local_name="LIMIVIA", service_uuids=[SERVICE]),
+            )
+        }
+
+    class Client:
+        def __init__(self, device, **kwargs):
+            captured["connect"] = kwargs
+
+    monkeypatch.setattr("limivia.transports.BleakScanner.discover", discover)
+    monkeypatch.setattr("limivia.transports.BleakClient", Client)
+    monkeypatch.setattr("limivia.transports.sys.platform", "linux")
+
+    async def run():
+        backend = DeviceBackend(ble_adapter="hci1")
+        await backend.discover("ble")
+        backend.transport("ble", "one")
+        assert captured["scan"]["bluez"] == {"adapter": "hci1"}
+        assert captured["connect"]["bluez"] == {"adapter": "hci1"}
+
+    asyncio.run(run())
+    with pytest.raises(ValueError):
+        DeviceBackend(ble_adapter="../hci1")
+    monkeypatch.setattr("limivia.transports.sys.platform", "win32")
+    with pytest.raises(ValueError):
+        DeviceBackend(ble_adapter="hci1")
+
+
+def test_gatt_connection_error_keeps_the_original_cause(monkeypatch):
+    from limivia import DeviceConnectionError
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def connect(self):
+            raise ConnectionError("controller link failed")
+
+    monkeypatch.setattr("limivia.transports.BleakClient", Client)
+
+    async def run():
+        with pytest.raises(
+            DeviceConnectionError, match="尚未发送业务请求.*controller link failed"
+        ) as error:
+            await BluetoothTransport("test").open()
+        assert isinstance(error.value.__cause__, ConnectionError)
 
     asyncio.run(run())

@@ -1,4 +1,65 @@
+# 当前版本：0.3.0a7 / JSON-RPC v3 r2
+
+真源：limivia-server/docs/protocol.md；以下 a7 修复与真源一致，后续保留历史快照。
+
+## 0.3.0a7：WebSocket 会话与 PWM 确认修复
+
+SDK 与固件统一为 **0.3.0a7**，继续使用 `limivia-v3-jsonrpc2-r2`，公开 Python API、JSON-RPC 字段、资源实例、序号、心跳及停止语义不变。
+
+- WebSocket 使用 ESP-IDF 6 的握手后回调建立两槽会话与关闭清理，每个连接设置 `TCP_NODELAY`，减少回复头和正文分开发送引入的延迟。只接受非空、完整的单条 TEXT 消息，拒绝消息级分片；请求长度上限不变。
+- PWM 创建和 `duty` 更新在外设工作线程中等实际 LEDC 占空比寄存器到达量化后的目标值，再返回确认；不再将上一周期的旧值作为成功结果。等待有界（实际定时器两周期加 20ms；创建时兼顾切换前较慢的周期），检查取消，不阻塞 actor。超时沿用驱动错误及可能已执行语义，调用方先查询，不自动重发写入。
+- `fade` 仍表示驱动已启动渐变，不表示整个渐变已结束。SDK 不增加回显请求值的替代逻辑，不新增协议编码或传输实现。
+- 不纳入实验 TCP 接口、诊断端口、强制关闭 Wi-Fi 省电或主机网络策略修改。USB、BLE 与 MQTT 沿用现有传输；Wi-Fi 性能与稳定性以对应实机记录为准。
+
+# 0.3.0a6 协议快照
+
+# 当前版本：0.3.0a6 / JSON-RPC v3 r2
+
+真源：limivia-server/docs/protocol.md。以下 a6 编码选择与真源一致；其后保留 a5 语义快照及历史来源。
+
+## 0.3.0a6：只读查询采用紧凑发送形式
+
+SDK 与固件版本为 0.3.0a6，继续使用 `limivia-v3-jsonrpc2-r2`。这是发送编码选择，r2 的参数、回复、资源实例、会话、序号和错误语义不变；固件继续接受命名及位置参数两种已有语法，a5 的规范和来源记录保留在下方。
+
+- 仅现有只读管理查询（session.ping、state、capabilities、diagnostics、resource.get、job.get、flow.get、flow.list、mux.query）和 resource.call/status 发送 `[context,args]`，省去冗余字段名及这些查询不使用的 control 字段。session 和 seq 保留。
+- 写入、open/close/recover、普通 resource.call/read、events 消费、握手、停止与订阅保持原命名报文。普通 read 的读写权限取决于具体外设，不能按名字统一省去控制令牌。
+- 单条发送、batch 预检和队列大小校验使用同一编码函数，继续执行 1024 字节上限。公共 encode_command 默认行为保持不变。
+- 保留确认写、原请求关联、错误处理、心跳、停止优先级和所有消息边界；不新增压缩算法或二进制协议，不改 BLE 参数。
+- USB 实机只用于确认协议等价、报文字节及有线性能。BLE 的实际延迟、冷连接和长期稳定性仍需单独验证，不能由 USB 结果代替。
+
+# 0.3.0a5 协议快照
+
+真源：limivia-server/docs/protocol.md；本次 r2 修订与三仓库实现同步；固件来源 dc0c120。下方保留原始来源与历史快照。
+
+## 当前修订：0.3.0a5 / limivia-v3-jsonrpc2-r2
+
+本节覆盖下方冻结快照中同名规则。SDK 与固件均为 **0.3.0a5**，hello 的 contract 必须为 `limivia-v3-jsonrpc2-r2`。仍使用 JSON-RPC 2.0、协议主版本 3 和 UTF-8 JSON+LF；不协商或解析旧 contract。沿用 a4 的 MTU 分片、确认写、心跳与独立停止通道。
+
+- `resource.call/close/recover` 的 args 必须同时包含正整数 `resource`、`instance`。固件入队时核对实例，工作线程执行前再次核对硬件槽的 ID/实例和停止 epoch；旧实例返回 `stale_instance`，不得产生输出。
+- 子设备 open/preflight 传 `parent` 时必须传 `parent_instance`。GPIO group.read/write 与 rmt.sync 的每个 resources 条目均带 `resource`、`instance`，其余字段不变。
+- GPIO `resource.open` 以及已有 GPIO 的 `read/write/status`、已有 PWM 的 `duty/status` 直接返回最终结果。驱动继续由工作线程执行，actor 保留原 RPC 的关联后继续处理心跳/停止，驱动完成后才回复；普通请求每 endpoint 最多一帧，batch 仍最多 8 条。慢操作继续 accepted + job.get。
+- 直接成功的 `result.value` 包含 `resource`、`instance`、`revision`、`observed_us`（本次完成的设备单调时间，微秒）和驱动状态。GPIO 包含 `mode`、实际读取的逻辑 `level`、`enabled`；PWM 包含实际 `duty_percent`、`enabled`。GPIO open 另含完整 `info`，state 必须 ready。value 顶层不含 job_id；info.job_id=0 只是资源空闲元数据。
+- 直接失败使用标准 error；包含 reason/context，驱动失败额外包含 driver_error、external_effect_possible。停止取消原待答操作，旧完成不恢复输出；断连释放回复关联，不重发请求。编码容量不足保留原 ID，返回 response_capacity 与可能执行标记，调用方必须先查询，不能重发写入。
+- SDK 的 GPIO.write 返回 GPIOState，PWM.set_duty 返回 PWMState；GPIO.read 保持 int。资源对象本地检查连接/boot，设备负责原子实例校验，不再每次 resource.get。GPIO open 的 info/initial_state 可直接使用。jobs.submit 对上述直接操作在写入前拒绝，普通业务或 raw 接口接收直接结果。
+- 工作台直接合并确认结果，GPIO open 局部加入资源及电平，后台再同步整板；常规 GPIO 写不另行回读，LED 不额外预检/查询。快速前台请求只等在途普通请求或当前页，最多连续 4 个前台帧后允许后台页继续，心跳/停止优先。慢操作沿用完整快照协调。主动让路不作为设备读失败，不清空已确认电平。
+- 浏览器优先等待现有 WebSocket operation 终态（缓存最多 128 条，核对 generation/boot）；丢通知时每秒只读查询任务，不重发设备写操作。
+
+直接结果示例（外层 context 与 ID 规则不变）：
+
+```json
+{"resource":17,"instance":17,"revision":5,"observed_us":1234000,"enabled":true,"mode":"output","level":1}
+```
+
+### 历史协议快照
+
+以下内容记录旧版本来源及旧行为，遇到差异以上述 r2 规则为准。
+
+
 # SDK JSON-RPC v3 契约快照
+
+## 0.3.0a4 当前修订
+
+当前真源：limivia-server/docs/protocol.md。默认线格式仍为 JSON-RPC v3；固件与 SDK 版本均为 0.3.0a4。BLE 保留确认写，按实际 MTU 分片；普通/管理/停止准入容量为 1/4/1。Linux 的 ble_adapter 同时选择扫描与连接控制器。DEFLATE 帧仅作默认关闭的候选，未通过实机收益及稳定性门槛，不声明正式升级为 v4。下文冻结来源和历史报文保留，不将其当成 a4 的新增实机证据。
 
 来源固件检出 `f110c38ca370fe017fdf4c08e94632d2cbf52f84`；冻结镜像源码 `e0340006bd2c7bd6fb8345295299ce3085c45fe0`。逐文件 SHA256 见 `tests/vectors/contract-source.json`。下文保留上游契约原文，其中“本轮只改固件”等表述属于上游历史上下文；本 SDK 已按 JSON-RPC 契约适配。运行与构建不读取相邻检出。
 

@@ -30,9 +30,11 @@ from .types import (
 from .types.results import (
     ADCSample,
     GPIOConfig,
+    GPIOState,
     OperationResult,
     PeripheralEvents,
     PWMConfig,
+    PWMState,
     UARTConfig,
 )
 
@@ -74,16 +76,16 @@ class GPIOPin(Resource[AsyncGPIOPin]):
     def read(self) -> int:
         return self._portal.call(self._async.read)
 
-    def write(self, value: int) -> None:
-        self._portal.call(self._async.write, value)
+    def write(self, value: int) -> GPIOState:
+        return self._portal.call(self._async.write, value)
 
     def events(self) -> PeripheralEvents:
         return self._portal.call(self._async.events)
 
 
 class PWMOutput(Resource[AsyncPWMOutput]):
-    def set_duty(self, duty: float) -> None:
-        self._portal.call(self._async.set_duty, duty)
+    def set_duty(self, duty: float) -> PWMState:
+        return self._portal.call(self._async.set_duty, duty)
 
     def fade(self, duty: float, *, duration_ms: int) -> None:
         self._portal.call(partial(self._async.fade, duty, duration_ms=duration_ms))

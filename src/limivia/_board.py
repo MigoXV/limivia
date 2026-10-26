@@ -222,6 +222,16 @@ class AsyncJobs:
         parsed = parse_command(command)
         if parsed.type not in JOB_OPERATIONS:
             raise InvalidCommandError("该操作不产生设备作业，请使用普通业务方法或 raw")
+        direct = parsed.type == OperationName.RESOURCE_OPEN and parsed.params.get("kind") == "gpio"
+        if parsed.type == OperationName.RESOURCE_CALL:
+            info = await self.board._resource_info(parsed.params["resource"])
+            direct = (
+                info.kind == "gpio" and parsed.params["action"] in {"read", "write", "status"}
+            ) or (info.kind == "pwm" and parsed.params["action"] in {"duty", "status"})
+        if direct:
+            raise InvalidCommandError(
+                "该操作直接返回确认结果，不产生公开作业；请使用业务方法或 raw"
+            )
         await self.board._prepare(parsed)
         ticket = self.board._hub.submit(parsed)
         event = await ticket.wait(accepted=True)
