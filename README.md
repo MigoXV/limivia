@@ -224,6 +224,8 @@ poetry run python -m examples.peripherals.async_gpio_blink
 ```bash
 poetry run python -m examples.device.connect --kind usb --target /dev/ttyACM0
 poetry run python -m examples.device.connect --kind ws --target ws://板卡IP/v3
+# 首次配网并通过 WebSocket 点灯（交互输入 Wi-Fi 信息）
+poetry run python -m examples.device.usb_wifi_websocket
 ```
 
 引脚等业务参数直接修改示例中的 SDK 调用，旧的示例 `--kind/--pin/--duration` 等选项已移除。另见[固件契约快照](docs/protocol-v3.md)、[迁移说明](docs/migration-v3.md)、[验证记录](docs/verification.md)。SDK 完整验证命令：
